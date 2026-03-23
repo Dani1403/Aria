@@ -127,13 +127,13 @@ def normalize_artwork(name: str) -> str:
 
 def main(vrs_path: str, fps: float = 0.5):
 
-    if not Path(vrs_path).exists():
-        print(f"Error: VRS not found -> {vrs_path}")
-        return
+    # if not Path(vrs_path).exists():
+    #     print(f"Error: VRS not found -> {vrs_path}")
+    #     return
 
     start_time = time.time()
 
-    sentence_q = queue.Queue(maxsize=8)
+    sentence_q = queue.Queue(maxsize=50)
     audio_q = queue.Queue()
 
     vision_error = []
@@ -146,7 +146,7 @@ def main(vrs_path: str, fps: float = 0.5):
         try:
             # for idx, jpeg in extract_frames(vrs_path, target_fps=fps):
             for idx, jpeg in extract_frames_from_video("Louvre2.mp4", target_fps=fps):
-                if sentence_q.qsize() >= 8:
+                if sentence_q.qsize() >= 50:
                     print("Skipping frame due to backlog...")
                     continue
                 print(f"\n--- Frame {idx} ---\n")
