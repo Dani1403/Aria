@@ -8,6 +8,7 @@ Usage:
 import sys
 import time
 import queue
+import shutil
 import threading
 from pathlib import Path
 
@@ -125,15 +126,35 @@ def normalize_artwork(name: str) -> str:
     return name
 
 
-def main(vrs_path: str, fps: float = 0.5):
+def is_similar_artwork(new_name: str, seen: set, threshold: float = 0.5) -> bool:
+    """Check if new_name is similar to any name in the seen set.
 
-    # if not Path(vrs_path).exists():
-    #     print(f"Error: VRS not found -> {vrs_path}")
-    #     return
+    Uses word overlap ratio: if >= threshold of words match, it's a duplicate.
+    E.g. "louvre pyramid" vs "glass pyramid" -> 1/2 = 50% -> duplicate.
+    """
+    new_words = set(new_name.split())
+    for seen_name in seen:
+        seen_words = set(seen_name.split())
+        if not new_words or not seen_words:
+            continue
+        common = new_words & seen_words
+        similarity = max(len(common) / len(new_words), len(common) / len(seen_words))
+        if similarity >= threshold:
+            return True
+    return False
+
+
+def main(video_path: str, fps: float = 0.5):
+
+    load_dotenv()
+
+    if not Path(video_path).exists():
+        print(f"Error: file not found -> {video_path}")
+        return
 
     start_time = time.time()
 
-    sentence_q = queue.Queue(maxsize=50)
+    sentence_q = queue.Queue(maxsize=20)
     audio_q = queue.Queue()
 
     vision_error = []
@@ -141,34 +162,38 @@ def main(vrs_path: str, fps: float = 0.5):
 
     client = OpenAI()
 
+    # Clean debug_frames folder at each run
+    debug_dir = Path("debug_frames")
+    if debug_dir.exists():
+        shutil.rmtree(debug_dir)
+    debug_dir.mkdir()
+
     # --- Thread 1: frame to vision ---
     def vision_worker():
         try:
-            # for idx, jpeg in extract_frames(vrs_path, target_fps=fps):
-            for idx, jpeg in extract_frames_from_video("Louvre2.mp4", target_fps=fps):
-                if sentence_q.qsize() >= 50:
-                    print("Skipping frame due to backlog...")
-                    continue
+            for idx, jpeg in extract_frames_from_video(video_path, target_fps=fps):
+                # Wait until TTS has caught up before processing a new frame
+                while sentence_q.qsize() >= 5:
+                    time.sleep(0.5)
                 print(f"\n--- Frame {idx} ---\n")
-                # Keep trace of the analyzed frame, store it for debugging in a dedicated folder
-                Path("debug_frames").mkdir(exist_ok=True)
                 with open(f"debug_frames/frame_{idx}.jpg", "wb") as f:
                     f.write(jpeg)
-                stream_guide_sentences_from_bytes(jpeg, sentence_q, client)
-
-            # end of ALL frames
-            sentence_q.put(STREAM_DONE)
+                try:
+                    stream_guide_sentences_from_bytes(jpeg, sentence_q, client)
+                except Exception as e:
+                    print(f"Error processing frame {idx}, skipping: {e}")
+                    continue
 
         except Exception as e:
             vision_error.append(e)
+        finally:
             sentence_q.put(STREAM_DONE)
 
     # --- Thread 2: TTS ---
     def tts_worker():
         idx = 0
-        current_artwork = None
         try:
-            current_artwork = None
+            seen_artworks = set()
             allow_description = False
             sentence_count = 0
             MAX_SENTENCES = 4
@@ -195,14 +220,14 @@ def main(vrs_path: str, fps: float = 0.5):
 
                     print(f"Detected artwork: {artwork_name}")
 
-                    # same artwork ignore ENTIRE block
-                    if current_artwork == artwork_name:
-                        print("Same artwork skipping")
+                    # fuzzy check against ALL previously seen artworks
+                    if is_similar_artwork(artwork_name, seen_artworks):
+                        print(f"Similar artwork already seen, skipping: {artwork_name}")
                         allow_description = False
                         continue
 
                     # NEW artwork
-                    current_artwork = artwork_name
+                    seen_artworks.add(artwork_name)
                     allow_description = True
                     sentence_count = 0
 
@@ -283,4 +308,11 @@ def main(vrs_path: str, fps: float = 0.5):
 
 
 if __name__ == "__main__":
-    main("Stream.vrs", fps=0.5)
+    if len(sys.argv) < 2:
+        print("Usage: python main.py <video_path> [fps]")
+        print("Example: python main.py Louvre2.mp4 0.5")
+        sys.exit(1)
+
+    video = sys.argv[1]
+    fps = float(sys.argv[2]) if len(sys.argv) > 2 else 0.5
+    main(video, fps=fps)

@@ -1,4 +1,8 @@
-from pyvrs.reader import SyncVRSReader
+try:
+    from pyvrs.reader import SyncVRSReader
+except ImportError:
+    SyncVRSReader = None
+
 import math
 import cv2
 

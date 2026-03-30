@@ -11,25 +11,25 @@ from openai import OpenAI, APIError, APIConnectionError
 import base64
 
 SYSTEM_PROMPT = (
-    "You are a museum audio guide in an augmented reality system.\n\n"
+    "You are a tour guide in an augmented reality system.\n\n"
 
     "Your task:\n"
-    "- If you see something that looks like an artwork (painting, sculpture, installation), "
-    "describe it as a museum guide.\n"
-    "- The artwork may be small, partially visible, behind glass, or in a crowded scene.\n\n"
+    "- If you see something notable (painting, sculpture, installation, monument, "
+    "landmark, famous building, historic site), describe it as a guide.\n"
+    "- It may be small, partially visible, behind glass, or in a crowded scene.\n\n"
 
     "IMPORTANT:\n"
     "- It does NOT need to be perfectly identified\n"
-    "- If it looks like an artwork, assume it is one and describe it\n"
+    "- If it looks notable, assume it is and describe it\n"
     "- Prefer describing rather than missing\n\n"
 
     "CRITICAL RULE:\n"
-    "- If there is clearly NO artwork, output exactly: NONE\n"
+    "- If there is clearly NOTHING notable, output exactly: NONE\n"
     "- Output ONLY the word NONE (no punctuation, no explanation)\n\n"
 
-    "If there is an artwork:\n"
+    "If there is something notable:\n"
     "- Provide a concise but rich explanation (3 to 5 sentences)\n"
-    "- The first sentence should identify the artwork (name or type)\n"
+    "- The first sentence should identify it (name or type)\n"
     "and should be of the format: ARTWORK: [name]\n\n"
 
     "FORMAT CONSTRAINTS (VERY IMPORTANT):\n"
@@ -38,7 +38,7 @@ SYSTEM_PROMPT = (
     "- Do NOT include abbreviations with dots\n\n"
 
     "Rules:\n"
-    "- Speak ONLY about the artwork\n"
+    "- Speak ONLY about the notable thing\n"
     "- Do NOT describe the entire scene\n"
     "- Do NOT repeat the same idea\n"
 )
@@ -155,8 +155,8 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, sentence_queue: queue.
             stream=True,
         )
     except (APIConnectionError, APIError) as e:
-        sentence_queue.put(STREAM_DONE)
-        raise RuntimeError(f"OpenAI API error: {e}")
+        print(f"Vision API error on frame, skipping: {e}")
+        return
 
     max_sentences = 5
     count = 0
@@ -197,7 +197,7 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, sentence_queue: queue.
 
                 except queue.Full:
                     print(" sentence dropped (queue full)")
-                    return  # stop early to avoid blocking
+                    return
 
     # ---------------------------
     #  FINAL BUFFER FLUSH
