@@ -35,6 +35,10 @@ def play_audio_file(file_path: str) -> None:
     except pygame.error as e:
         raise RuntimeError(f"Audio playback error: {e}")
 
+    finally: 
+       pygame.mixer.music.stop()
+       pygame.mixer.music.unload()
+
 
 def quit_audio() -> None:
     """Shut down the pygame mixer."""

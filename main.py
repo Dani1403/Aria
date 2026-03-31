@@ -291,6 +291,8 @@ def main(video_path: str, fps: float = 0.5):
                 first = False
 
             play_audio_file(mp3_path)
+
+            # Clean up the temporary file
             Path(mp3_path).unlink(missing_ok=True)
 
     finally:
