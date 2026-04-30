@@ -128,7 +128,7 @@ def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None
 
 
 
-def stream_guide_sentences_from_bytes(image_bytes: bytes, sentence_queue: queue.Queue, client) -> None:
+def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sentence_queue: queue.Queue, client) -> None:
 
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -189,7 +189,7 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, sentence_queue: queue.
                 #  PUSH TO QUEUE
                 # ---------------------------
                 try:
-                    sentence_queue.put(sentence, block=False)
+                    sentence_queue.put((sentence, timestamp), block=False)
                     count += 1
 
                     if count >= max_sentences:
@@ -204,6 +204,6 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, sentence_queue: queue.
     # ---------------------------
     if count < max_sentences and buffer.strip():
         try:
-            sentence_queue.put(buffer.strip(), block=False)
+            sentence_queue.put((buffer.strip(), timestamp), block=False)
         except queue.Full:
             pass

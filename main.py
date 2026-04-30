@@ -51,6 +51,14 @@ def is_similar_artwork(new_name: str, seen: set, threshold: float = 0.5) -> bool
     return False
 
 
+
+
+latency_start = {"t": None, 
+                 "ux_done": False,
+                 "real_done": False
+                 }
+
+
 def main(video_path: str, fps: float = 0.5):
 
     load_dotenv()
@@ -59,7 +67,6 @@ def main(video_path: str, fps: float = 0.5):
         print(f"Error: file not found -> {video_path}")
         return
 
-    start_time = time.time()
 
     # Queues for communication between threads
 
@@ -123,16 +130,17 @@ def main(video_path: str, fps: float = 0.5):
             while True:
                 idx, jpeg = frame_q.get()
 
-            #for idx, jpeg in extract_frames_from_video(video_path, target_fps=fps):
 
                 # Wait until TTS has caught up before processing a new frame
                 while sentence_q.qsize() >= 5:
                     time.sleep(0.5)
-                print(f"\n--- Frame {idx} ---\n")
+                #attach a timestamp to measure latency to first audio
+                timestamp = time.time()
+                print(f"Processing frame {idx} with timestamp {timestamp:.2f}")
                 with open(f"debug_frames/frame_{idx}.jpg", "wb") as f:
                     f.write(jpeg)
                 try:
-                    stream_guide_sentences_from_bytes(jpeg, sentence_q, client)
+                    stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client)
                 except Exception as e:
                     print(f"Error processing frame {idx}, skipping: {e}")
                     continue
@@ -159,7 +167,7 @@ def main(video_path: str, fps: float = 0.5):
             MAX_SENTENCES = 4
 
             while True:
-                sentence = sentence_q.get()
+                sentence, frame_timestamp = sentence_q.get()
 
                 if sentence is STREAM_DONE:
                     break
@@ -175,6 +183,10 @@ def main(video_path: str, fps: float = 0.5):
                 # ARTWORK HEADER
                 # -------------------------
                 if sentence.startswith("ARTWORK:"):
+
+
+
+
                     raw_name = sentence.replace("ARTWORK:", "").strip()
                     artwork_name = normalize_artwork(raw_name)
 
@@ -187,6 +199,13 @@ def main(video_path: str, fps: float = 0.5):
                         continue
 
                     # NEW artwork
+
+                    # start timer when we detect a new artwork in order to measure time to first audio
+                    latency_start["t"] = frame_timestamp
+                    latency_start["ux_done"] = False
+                    latency_start["real_done"] = False
+
+
                     seen_artworks.add(artwork_name)
                     allow_description = True
                     sentence_count = 0
@@ -195,7 +214,7 @@ def main(video_path: str, fps: float = 0.5):
 
                     #play the generic phrase in order to fill the gap while the TTS is generating the first sentence
                     print(f"TTS: {generic_sentence}")
-                    audio_q.put(generic_audio)
+                    audio_q.put(("GENERIC", generic_audio))
 
                     continue  
 
@@ -210,9 +229,8 @@ def main(video_path: str, fps: float = 0.5):
 
                 print(f"TTS: {sentence}")
 
-                audio_bytes = generate_sentence_audio(
-                    sentence, client)
-                audio_q.put(audio_bytes)
+                audio_bytes = generate_sentence_audio(sentence, client)
+                audio_q.put(("REAL", audio_bytes))
 
                 sentence_count += 1
 
@@ -242,18 +260,31 @@ def main(video_path: str, fps: float = 0.5):
     init_audio()
 
     try:
-        first = True
 
         while True:
 
-            audio_bytes = audio_q.get()
+            audio_type, audio_bytes = audio_q.get()
             if audio_bytes is STREAM_DONE:
                 break
 
-            if first:
-                elapsed = time.time() - start_time
-                print(f"\n--- Time to first audio: {elapsed:.2f}s ---\n")
-                first = False
+
+            if latency_start["t"] is not None:
+
+                if audio_type == "GENERIC" and not latency_start["ux_done"]:
+                    elapsed = time.time() - latency_start["t"]
+                    print(f"\n--- UX latency: {elapsed:.2f}s ---\n")
+                    latency_start["ux_done"] = True
+
+                if audio_type == "REAL" and not latency_start["real_done"]:
+                    elapsed = time.time() - latency_start["t"]
+                    print(f"\n--- REAL latency: {elapsed:.2f}s ---\n")
+                    latency_start["real_done"] = True
+
+                if latency_start["ux_done"] and latency_start["real_done"]:
+                    latency_start["t"] = None
+                    latency_start["ux_done"] = False
+                    latency_start["real_done"] = False
+
 
             play_audio_bytes(audio_bytes)
 
