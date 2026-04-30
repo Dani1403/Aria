@@ -5,6 +5,8 @@ except ImportError:
 
 import math
 import cv2
+import time
+
 
 def estimate_fps(reader, stream_id, frames):
     """
@@ -94,3 +96,16 @@ def extract_frames_from_video(video_path, target_fps=1.0):
         frame_idx += 1
 
     cap.release()
+
+# For streaming from VRS, we use a queue to receive new VRS file paths and yield frames as they come in.
+# def stream_vrs_frames(vrs_queue, fps):
+#     while True:
+#         vrs_path = vrs_queue.get()
+
+#         if vrs_path is None:
+#             break
+
+#         print(f"[STREAM] New VRS: {vrs_path}")
+
+#         for idx, jpeg in extract_frames(vrs_path, target_fps=fps):
+#             yield idx, jpeg 

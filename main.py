@@ -17,103 +17,10 @@ from dotenv import load_dotenv
 from vision import stream_guide_sentences, stream_guide_sentences_from_bytes,STREAM_DONE
 from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
-from extract_frames import extract_frames, extract_frames_from_video
+from extract_frames import extract_frames_from_video
+#from utils import pull_aria_recording
+
 from openai import OpenAI
-
-
-def prev_main() -> None:
-    load_dotenv()
-
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <image_path>")
-        print("Example: python main.py test_images/joconde.jpg")
-        sys.exit(1)
-
-    image_path = sys.argv[1]
-
-    if not Path(image_path).exists():
-        print(f"Error: image not found -> {image_path}")
-        sys.exit(1)
-
-    start_time = time.time()
-
-    # Queue: vision pushes sentences, main thread consumes them
-    sentence_q = queue.Queue()
-
-    # Queue: TTS worker pushes ready MP3 paths, playback thread consumes them
-    audio_q = queue.Queue()
-
-    vision_error = []
-    tts_error = []
-
-    # --- Thread 1: Vision streams sentences into sentence_q ---
-    def vision_worker():
-        try:
-            print(f"Analyzing image: {image_path}")
-            stream_guide_sentences(image_path, sentence_q)
-        except Exception as e:
-            vision_error.append(e)
-            sentence_q.put(STREAM_DONE)
-
-    # --- Thread 2: TTS consumes sentences, produces MP3 files ---
-    def tts_worker():
-        idx = 0
-        try:
-            while True:
-                sentence = sentence_q.get()
-                if sentence is STREAM_DONE:
-                    break
-                print(f"  TTS: \"{sentence}\"")
-                mp3_path = f"sentence_{idx}.mp3"
-                generate_sentence_audio(sentence, mp3_path)
-                audio_q.put(mp3_path)
-                idx += 1
-        except Exception as e:
-            tts_error.append(e)
-        finally:
-            audio_q.put(STREAM_DONE)
-
-    # Start vision and TTS threads
-    t_vision = threading.Thread(target=vision_worker)
-    t_tts = threading.Thread(target=tts_worker)
-    t_vision.start()
-    t_tts.start()
-
-    # --- Main thread: play MP3 files as they arrive ---
-    init_audio()
-    try:
-        first = True
-        while True:
-            mp3_path = audio_q.get()
-            if mp3_path is STREAM_DONE:
-                break
-            if first:
-                elapsed = time.time() - start_time
-                print(f"\n--- Time to first audio: {elapsed:.2f}s ---")
-                print("Playing audio guide...\n")
-                first = False
-            play_audio_file(mp3_path)
-            # Clean up the temporary file
-            Path(mp3_path).unlink(missing_ok=True)
-    except (FileNotFoundError, RuntimeError) as e:
-        print(f"Playback error: {e}")
-    finally:
-        quit_audio()
-
-    # Wait for threads to finish
-    t_vision.join()
-    t_tts.join()
-
-    if vision_error:
-        print(f"Vision error: {vision_error[0]}")
-        sys.exit(1)
-    if tts_error:
-        print(f"TTS error: {tts_error[0]}")
-        sys.exit(1)
-
-    print("\nPlayback complete.")
-
-
 
 def normalize_artwork(name: str) -> str:
     name = name.lower().strip()
@@ -154,8 +61,15 @@ def main(video_path: str, fps: float = 0.5):
 
     start_time = time.time()
 
+    # Queues for communication between threads
+
+    # Streaming: initialize VRS queue for new recordings
+    vrs_q = queue.Queue()
+
     sentence_q = queue.Queue(maxsize=20)
     audio_q = queue.Queue()
+
+    frame_q = queue.Queue()
 
     vision_error = []
     tts_error = []
@@ -168,10 +82,49 @@ def main(video_path: str, fps: float = 0.5):
         shutil.rmtree(debug_dir)
     debug_dir.mkdir()
 
+
+
+    # For pulling new VRS recordings, we can have a producer thread that checks for new recordings and puts their paths into a queue. It keeps track of seen paths to avoid duplicates.
+    def vrs_worker():
+
+        #TODO: add a set in order to avoid putting the same recording multiple times
+        #for testing, put the same one every 10 seconds
+
+        while True:
+
+            # Use any function that pulls the latest vrs recording from the streaming
+            # The function should return the file path of the new recording, or None if no new recording is available
+            # This is the heart of the streaming integration
+           # vrs_path = pull_aria_recording(0)
+
+            # for now, use two video files to simulate streaming by putting them into the queue with a delay
+            vrs_path = video_path
+
+            # Put the new VRS path into the queue
+            if vrs_path:
+                vrs_q.put(vrs_path)
+
+            time.sleep(10)
+
+
+    # Takes vrs file from the vrs queue and extracts frames, then puts them into the frame queue for processing by the vision worker.
+    # for now extract from video files
+    def frame_worker():
+        while True:
+            vrs_file = vrs_q.get()
+            for idx, jpeg in extract_frames_from_video(vrs_file, fps):
+                frame_q.put((idx, jpeg))
+
     # --- Thread 1: frame to vision ---
     def vision_worker():
         try:
-            for idx, jpeg in extract_frames_from_video(video_path, target_fps=fps):
+
+            # pull from frame queue
+            while True:
+                idx, jpeg = frame_q.get()
+
+            #for idx, jpeg in extract_frames_from_video(video_path, target_fps=fps):
+
                 # Wait until TTS has caught up before processing a new frame
                 while sentence_q.qsize() >= 5:
                     time.sleep(0.5)
@@ -186,8 +139,10 @@ def main(video_path: str, fps: float = 0.5):
 
         except Exception as e:
             vision_error.append(e)
-        finally:
-            sentence_q.put(STREAM_DONE)
+        # finally:
+
+        #     # BE CAREFUL to remove this when streaming
+        #     sentence_q.put(STREAM_DONE)
 
     # --- Thread 2: TTS ---
     def tts_worker():
@@ -268,11 +223,20 @@ def main(video_path: str, fps: float = 0.5):
             audio_q.put(STREAM_DONE)
 
     # Start threads
+
+    #streaming: start vrs worker
+    t_vrs = threading.Thread(target=vrs_worker)
+    t_frame = threading.Thread(target=frame_worker)
+
     t_vision = threading.Thread(target=vision_worker)
     t_tts = threading.Thread(target=tts_worker)
 
     t_vision.start()
     t_tts.start()
+
+    t_vrs.start()
+    t_frame.start()
+
 
     # --- Main thread: playback ---
     init_audio()
