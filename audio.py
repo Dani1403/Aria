@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 import pygame
+import io
 
 
 def init_audio() -> None:
@@ -43,3 +44,13 @@ def play_audio_file(file_path: str) -> None:
 def quit_audio() -> None:
     """Shut down the pygame mixer."""
     pygame.mixer.quit()
+
+
+def play_audio_bytes(audio_bytes):
+
+    audio_file = io.BytesIO(audio_bytes)
+    pygame.mixer.music.load(audio_file)
+    pygame.mixer.music.play()
+
+    while pygame.mixer.music.get_busy():
+        pygame.time.Clock().tick(10)

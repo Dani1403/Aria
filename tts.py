@@ -5,7 +5,7 @@ from pathlib import Path
 from openai import OpenAI, APIError, APIConnectionError
 
 
-def generate_sentence_audio(text: str, output_path: str, client) -> str:
+def generate_sentence_audio(text: str, client):
     """Convert a single sentence to an MP3 file via OpenAI TTS.
 
     Args:
@@ -36,10 +36,7 @@ def generate_sentence_audio(text: str, output_path: str, client) -> str:
     except APIError as e:
         raise RuntimeError(f"OpenAI TTS API error: {e}")
 
-    output = Path(output_path)
-    response.stream_to_file(output)
 
-    if not output.exists() or output.stat().st_size == 0:
-        raise RuntimeError("The generated audio file is empty or missing.")
+    audio_bytes = response.content
 
-    return str(output)
+    return audio_bytes

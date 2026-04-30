@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from vision import stream_guide_sentences, stream_guide_sentences_from_bytes,STREAM_DONE
 from tts import generate_sentence_audio
-from audio import init_audio, play_audio_file, quit_audio
+from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
 from extract_frames import extract_frames, extract_frames_from_video
 from openai import OpenAI
 
@@ -125,7 +125,7 @@ def normalize_artwork(name: str) -> str:
 
     return name
 
-
+#TODO : NOT GOOD
 def is_similar_artwork(new_name: str, seen: set, threshold: float = 0.5) -> bool:
     """Check if new_name is similar to any name in the seen set.
 
@@ -220,7 +220,7 @@ def main(video_path: str, fps: float = 0.5):
 
                     print(f"Detected artwork: {artwork_name}")
 
-                    # fuzzy check against ALL previously seen artworks
+                    #check against ALL previously seen artworks
                     if is_similar_artwork(artwork_name, seen_artworks):
                         print(f"Similar artwork already seen, skipping: {artwork_name}")
                         allow_description = False
@@ -235,12 +235,13 @@ def main(video_path: str, fps: float = 0.5):
 
                     # speak header
                     print(f"TTS: {sentence}")
-                    mp3_path = f"sentence_{idx}.mp3"
-                    generate_sentence_audio(sentence, mp3_path, client)
-                    audio_q.put(mp3_path)
+
+                    audio_bytes = generate_sentence_audio(
+                        sentence, client)
+                    audio_q.put(audio_bytes)
                     idx += 1
 
-                    continue  # IMPORTANT
+                    continue  
 
                 # -------------------------
                 # DESCRIPTION SENTENCES
@@ -253,9 +254,9 @@ def main(video_path: str, fps: float = 0.5):
 
                 print(f"TTS: {sentence}")
 
-                mp3_path = f"sentence_{idx}.mp3"
-                generate_sentence_audio(sentence, mp3_path, client)
-                audio_q.put(mp3_path)
+                audio_bytes = generate_sentence_audio(
+                    sentence, client)
+                audio_q.put(audio_bytes)
                 idx += 1
 
                 sentence_count += 1
@@ -280,9 +281,9 @@ def main(video_path: str, fps: float = 0.5):
         first = True
 
         while True:
-            mp3_path = audio_q.get()
 
-            if mp3_path is STREAM_DONE:
+            audio_bytes = audio_q.get()
+            if audio_bytes is STREAM_DONE:
                 break
 
             if first:
@@ -290,10 +291,7 @@ def main(video_path: str, fps: float = 0.5):
                 print(f"\n--- Time to first audio: {elapsed:.2f}s ---\n")
                 first = False
 
-            play_audio_file(mp3_path)
-
-            # Clean up the temporary file
-            Path(mp3_path).unlink(missing_ok=True)
+            play_audio_bytes(audio_bytes)
 
     finally:
         quit_audio()
