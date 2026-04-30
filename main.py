@@ -88,7 +88,7 @@ def main(video_path: str, fps: float = 0.5):
     def vrs_worker():
 
         #TODO: add a set in order to avoid putting the same recording multiple times
-        #for testing, put the same one every 10 seconds
+        #for testing, put the same one every minute
 
         while True:
 
@@ -104,7 +104,7 @@ def main(video_path: str, fps: float = 0.5):
             if vrs_path:
                 vrs_q.put(vrs_path)
 
-            time.sleep(10)
+            time.sleep(60)
 
 
     # Takes vrs file from the vrs queue and extracts frames, then puts them into the frame queue for processing by the vision worker.
@@ -146,7 +146,12 @@ def main(video_path: str, fps: float = 0.5):
 
     # --- Thread 2: TTS ---
     def tts_worker():
-        idx = 0
+
+        #Start by generating the audio for the generic phrase
+        generic_sentence = "This is a nice artwork let me tell you more about it !"
+        generic_audio = generate_sentence_audio(
+                        generic_sentence, client)
+
         try:
             seen_artworks = set()
             allow_description = False
@@ -188,13 +193,9 @@ def main(video_path: str, fps: float = 0.5):
 
                     print(f" NEW artwork {artwork_name}")
 
-                    # speak header
-                    print(f"TTS: {sentence}")
-
-                    audio_bytes = generate_sentence_audio(
-                        sentence, client)
-                    audio_q.put(audio_bytes)
-                    idx += 1
+                    #play the generic phrase in order to fill the gap while the TTS is generating the first sentence
+                    print(f"TTS: {generic_sentence}")
+                    audio_q.put(generic_audio)
 
                     continue  
 
@@ -212,7 +213,6 @@ def main(video_path: str, fps: float = 0.5):
                 audio_bytes = generate_sentence_audio(
                     sentence, client)
                 audio_q.put(audio_bytes)
-                idx += 1
 
                 sentence_count += 1
 
