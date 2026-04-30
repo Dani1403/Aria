@@ -28,6 +28,7 @@ def generate_sentence_audio(text: str, client):
             model="tts-1",
             voice="nova",
             input=text,
+            speed=1.2,
         )
     except APIConnectionError:
         raise RuntimeError(
