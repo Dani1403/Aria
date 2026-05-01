@@ -19,6 +19,7 @@ from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
 from extract_frames import extract_frames_from_video
 #from utils import pull_aria_recording
+from stream import simulate_stream
 
 from openai import OpenAI
 
@@ -94,25 +95,25 @@ def main(video_path: str, fps: float = 0.5):
     # For pulling new VRS recordings, we can have a producer thread that checks for new recordings and puts their paths into a queue. It keeps track of seen paths to avoid duplicates.
     def vrs_worker():
 
-        #TODO: add a set in order to avoid putting the same recording multiple times
-        #for testing, put the same one every minute
+        # while True:
 
-        while True:
+        #     # Use any function that pulls the latest vrs recording from the streaming
+        #     # The function should return the file path of the new recording, or None if no new recording is available
+        #     # This is the heart of the streaming integration
+        #    # vrs_path = pull_aria_recording(0)
 
-            # Use any function that pulls the latest vrs recording from the streaming
-            # The function should return the file path of the new recording, or None if no new recording is available
-            # This is the heart of the streaming integration
-           # vrs_path = pull_aria_recording(0)
+        #     # for now, use two video files to simulate streaming by putting them into the queue with a delay
+        #     vrs_path = video_path
 
-            # for now, use two video files to simulate streaming by putting them into the queue with a delay
-            vrs_path = video_path
+        #     # Put the new VRS path into the queue
+        #     if vrs_path:
+        #         vrs_q.put(vrs_path)
 
-            # Put the new VRS path into the queue
-            if vrs_path:
-                vrs_q.put(vrs_path)
+        #     time.sleep(60)
 
-            time.sleep(60)
-
+        #for testing, use the function that simulates the stream
+        simulate_stream(video, vrs_q, output_dir="stream_chunks",
+                    chunk_duration=3.0, realtime=True)
 
     # Takes vrs file from the vrs queue and extracts frames, then puts them into the frame queue for processing by the vision worker.
     # for now extract from video files
