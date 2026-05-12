@@ -19,7 +19,12 @@ from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
 from extract_frames import extract_frames_from_video
 #from utils import pull_aria_recording
-from stream import simulate_stream
+#from stream import simulate_stream
+
+#streaming
+import cv2
+import aria.sdk as aria
+import numpy as np
 
 from openai import OpenAI
 
@@ -60,19 +65,19 @@ latency_start = {"t": None,
                  }
 
 
-def main(video_path: str, fps: float = 0.5):
+def main(video_path: str = None, fps: float = 0.5):
 
     load_dotenv()
 
-    if not Path(video_path).exists():
-        print(f"Error: file not found -> {video_path}")
-        return
+    # if not Path(video_path).exists():
+    #     print(f"Error: file not found -> {video_path}")
+    #     return
 
 
     # Queues for communication between threads
 
     # Streaming: initialize VRS queue for new recordings
-    vrs_q = queue.Queue()
+    #vrs_q = queue.Queue()
 
     sentence_q = queue.Queue(maxsize=20)
     audio_q = queue.Queue()
@@ -93,8 +98,8 @@ def main(video_path: str, fps: float = 0.5):
 
 
     # For pulling new VRS recordings, we can have a producer thread that checks for new recordings and puts their paths into a queue. It keeps track of seen paths to avoid duplicates.
-    def vrs_worker():
-
+    # def vrs_worker():
+    
         # while True:
 
         #     # Use any function that pulls the latest vrs recording from the streaming
@@ -112,38 +117,187 @@ def main(video_path: str, fps: float = 0.5):
         #     time.sleep(60)
 
         #for testing, use the function that simulates the stream
-        simulate_stream(video, vrs_q, output_dir="stream_chunks",
-                    chunk_duration=3.0, realtime=True)
+        # simulate_stream(video, vrs_q, output_dir="stream_chunks",
+        #             chunk_duration=3.0, realtime=True)
 
     # Takes vrs file from the vrs queue and extracts frames, then puts them into the frame queue for processing by the vision worker.
     # for now extract from video files
-    def frame_worker():
-        while True:
-            vrs_file = vrs_q.get()
-            for idx, jpeg in extract_frames_from_video(vrs_file, fps):
-                frame_q.put((idx, jpeg))
+    # def frame_worker():
+    #     while True:
+    #         vrs_file = vrs_q.get()
+    #         for idx, jpeg in extract_frames_from_video(vrs_file, fps):
+    #             frame_q.put((idx, jpeg))
 
-    # --- Thread 1: frame to vision ---
+    def aria_worker(frame_q):
+
+        #
+        # Minimal observer base class
+        # (Meta defines this inside visualizer.py)
+        #
+        class BaseStreamingClientObserver:
+
+            def on_image_received(self, image, record):
+                pass
+
+            def on_streaming_client_failure(self, reason, message):
+                pass
+
+        #
+        # Our pipeline observer
+        #
+        class AriaObserver(BaseStreamingClientObserver):
+
+            def __init__(self, frame_q):
+                self.frame_q = frame_q
+
+            def on_image_received(self, image, record):
+
+                try:
+
+                    #
+                    # Rotate image like Meta sample
+                    #
+                    if record.camera_id != aria.CameraId.EyeTrack:
+                        image = np.rot90(image)
+                    else:
+                        image = np.rot90(image, 2)
+
+                    #
+                    # Encode JPEG
+                    #
+                    success, jpeg = cv2.imencode(
+                        ".jpg",
+                        image,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), 70]
+                    )
+
+                    if not success:
+                        print("[ARIA] JPEG encode failed")
+                        return
+
+                    #
+                    # Backpressure protection
+                    #
+                    if self.frame_q.qsize() >= 10:
+                        print("[ARIA] Dropping frame")
+                        return
+
+                    #
+                    # Push into pipeline
+                    #
+                    timestamp = time.time()
+
+                    self.frame_q.put(
+                        (timestamp, jpeg.tobytes()),
+                        block=False
+                    )
+
+                    print(f"[ARIA] RGB frame queued | qsize={self.frame_q.qsize()}")
+
+                except Exception as e:
+                    print(f"[ARIA] Callback error: {e}")
+
+            def on_streaming_client_failure(self, reason, message):
+                print(f"[ARIA] Streaming failure: {reason} | {message}")
+
+        try:
+
+            print("[ARIA] Connecting...")
+
+            aria.set_log_level(aria.Level.Info)
+
+            #
+            # Connect device
+            #
+            client = aria.DeviceClient()
+
+            device_config = aria.DeviceClientConfig()
+            client.set_client_config(device_config)
+
+            device = client.connect()
+
+            print("[ARIA] Connected")
+
+            #
+            # Streaming manager
+            #
+            streaming_manager = device.streaming_manager
+
+            #
+            # force USB streaming
+            #
+            streaming_config = streaming_manager.streaming_config
+
+            streaming_config.streaming_interface = (
+                aria.StreamingInterface.Usb
+            )
+
+            print(
+                f"[ARIA] Streaming interface = "
+                f"{streaming_config.streaming_interface}"
+            )
+
+            #
+            # Start streaming service
+            #
+            print("[ARIA] Starting streaming...")
+
+            streaming_manager.start_streaming()
+
+            print("[ARIA] Streaming started")
+
+            #
+            # Streaming client
+            #
+            streaming_client = streaming_manager.streaming_client
+
+            #
+            # Observer
+            #
+            observer = AriaObserver(frame_q)
+
+            streaming_client.set_streaming_client_observer(observer)
+
+            #
+            # Subscribe
+            #
+            print("[ARIA] Subscribing...")
+
+            streaming_client.subscribe()
+
+            print("[ARIA] Subscription active")
+
+            #
+            # Keep thread alive
+            #
+            while True:
+                time.sleep(1)
+
+        except Exception as e:
+            print(f"[ARIA] Worker fatal error: {e}")
+
+    # --- Thread 2: frame to vision ---
     def vision_worker():
         try:
 
             # pull from frame queue
             while True:
-                idx, jpeg = frame_q.get()
+                timestamp, jpeg = frame_q.get()
 
 
                 # Wait until TTS has caught up before processing a new frame
                 while sentence_q.qsize() >= 5:
                     time.sleep(0.5)
                 #attach a timestamp to measure latency to first audio
-                timestamp = time.time()
-                print(f"Processing frame {idx} with timestamp {timestamp:.2f}")
-                with open(f"debug_frames/frame_{idx}.jpg", "wb") as f:
-                    f.write(jpeg)
+                # timestamp = time.time()
+                # print(f"Processing frame {idx} with timestamp {timestamp:.2f}")
+                # with open(f"debug_frames/frame_{idx}.jpg", "wb") as f:
+                #     f.write(jpeg)
                 try:
                     stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client)
                 except Exception as e:
-                    print(f"Error processing frame {idx}, skipping: {e}")
+                    #print(f"Error processing frame {idx}, skipping: {e}")
+                    print(f"Error processing frame")
                     continue
 
         except Exception as e:
@@ -153,7 +307,7 @@ def main(video_path: str, fps: float = 0.5):
         #     # BE CAREFUL to remove this when streaming
         #     sentence_q.put(STREAM_DONE)
 
-    # --- Thread 2: TTS ---
+    # --- Thread 3: TTS ---
     def tts_worker():
 
         #Start by generating the audio for the generic phrase
@@ -244,8 +398,16 @@ def main(video_path: str, fps: float = 0.5):
     # Start threads
 
     #streaming: start vrs worker
-    t_vrs = threading.Thread(target=vrs_worker)
-    t_frame = threading.Thread(target=frame_worker)
+    #t_vrs = threading.Thread(target=vrs_worker)
+    #t_frame = threading.Thread(target=frame_worker)
+
+    #streaming: start aria worker
+    t_aria = threading.Thread(
+        target=aria_worker,
+        args=(frame_q,),
+        daemon=True
+    )
+    t_aria.start()
 
     t_vision = threading.Thread(target=vision_worker)
     t_tts = threading.Thread(target=tts_worker)
@@ -253,8 +415,8 @@ def main(video_path: str, fps: float = 0.5):
     t_vision.start()
     t_tts.start()
 
-    t_vrs.start()
-    t_frame.start()
+    # t_vrs.start()
+    # t_frame.start()
 
 
     # --- Main thread: playback ---
@@ -304,11 +466,12 @@ def main(video_path: str, fps: float = 0.5):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <video_path> [fps]")
-        print("Example: python main.py Louvre2.mp4 0.5")
-        sys.exit(1)
+    # if len(sys.argv) < 2:
+    #     print("Usage: python main.py <video_path> [fps]")
+    #     print("Example: python main.py Louvre2.mp4 0.5")
+    #     sys.exit(1)
 
-    video = sys.argv[1]
-    fps = float(sys.argv[2]) if len(sys.argv) > 2 else 0.5
-    main(video, fps=fps)
+    # video = sys.argv[1]
+    # fps = float(sys.argv[2]) if len(sys.argv) > 2 else 0.5
+    # main(video, fps=fps)
+    main()
