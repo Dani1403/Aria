@@ -26,6 +26,8 @@ import cv2
 import aria.sdk as aria
 import numpy as np
 
+from visualizer import BaseStreamingClientObserver
+
 from openai import OpenAI
 
 def normalize_artwork(name: str) -> str:
@@ -63,6 +65,47 @@ latency_start = {"t": None,
                  "ux_done": False,
                  "real_done": False
                  }
+
+
+class AriaObserver(BaseStreamingClientObserver):
+
+    def __init__(self, frame_queue):
+        self.frame_queue = frame_queue
+
+    def on_image_received(self, image, record):
+
+        print("[ARIA] IMAGE CALLBACK")
+
+        try:
+
+            if record.camera_id != aria.CameraId.EyeTrack:
+                image = np.rot90(image)
+            else:
+                image = np.rot90(image,2)
+
+            success, jpeg = cv2.imencode(
+                ".jpg",
+                image,
+                [int(cv2.IMWRITE_JPEG_QUALITY),70]
+            )
+
+            if not success:
+                return
+
+            if self.frame_queue.qsize() >= 10:
+                return
+
+            self.frame_queue.put(
+                (time.time(), jpeg.tobytes()),
+                block=False
+            )
+
+            print(
+                f"[ARIA] queued q={self.frame_queue.qsize()}"
+            )
+
+        except Exception as e:
+            print(e)
 
 
 def main(video_path: str = None, fps: float = 0.5):
@@ -128,78 +171,9 @@ def main(video_path: str = None, fps: float = 0.5):
     #         for idx, jpeg in extract_frames_from_video(vrs_file, fps):
     #             frame_q.put((idx, jpeg))
 
-    def aria_worker(frame_q):
 
-        #
-        # Minimal observer base class
-        # (Meta defines this inside visualizer.py)
-        #
-        class BaseStreamingClientObserver:
 
-            def on_image_received(self, image, record):
-                pass
-
-            def on_streaming_client_failure(self, reason, message):
-                pass
-
-        #
-        # Our pipeline observer
-        #
-        class AriaObserver(BaseStreamingClientObserver):
-
-            def __init__(self, frame_q):
-                self.frame_q = frame_q
-
-            def on_image_received(self, image, record):
-
-                try:
-
-                    #
-                    # Rotate image like Meta sample
-                    #
-                    if record.camera_id != aria.CameraId.EyeTrack:
-                        image = np.rot90(image)
-                    else:
-                        image = np.rot90(image, 2)
-
-                    #
-                    # Encode JPEG
-                    #
-                    success, jpeg = cv2.imencode(
-                        ".jpg",
-                        image,
-                        [int(cv2.IMWRITE_JPEG_QUALITY), 70]
-                    )
-
-                    if not success:
-                        print("[ARIA] JPEG encode failed")
-                        return
-
-                    #
-                    # Backpressure protection
-                    #
-                    if self.frame_q.qsize() >= 10:
-                        print("[ARIA] Dropping frame")
-                        return
-
-                    #
-                    # Push into pipeline
-                    #
-                    timestamp = time.time()
-
-                    self.frame_q.put(
-                        (timestamp, jpeg.tobytes()),
-                        block=False
-                    )
-
-                    print(f"[ARIA] RGB frame queued | qsize={self.frame_q.qsize()}")
-
-                except Exception as e:
-                    print(f"[ARIA] Callback error: {e}")
-
-            def on_streaming_client_failure(self, reason, message):
-                print(f"[ARIA] Streaming failure: {reason} | {message}")
-
+    def aria_worker():
         try:
 
             print("[ARIA] Connecting...")
@@ -224,7 +198,7 @@ def main(video_path: str = None, fps: float = 0.5):
             streaming_manager = device.streaming_manager
 
             #
-            # force USB streaming
+            # USB streaming
             #
             streaming_config = streaming_manager.streaming_config
 
@@ -252,26 +226,55 @@ def main(video_path: str = None, fps: float = 0.5):
             streaming_client = streaming_manager.streaming_client
 
             #
-            # Observer
+            # Configure subscription
             #
+            sub_config = streaming_client.subscription_config
+
+            #
+            # Subscribe to RGB
+            #
+            sub_config.subscriber_data_type = (
+                aria.StreamingDataType.Rgb
+            )
+
+            #
+            # Keep only newest frames
+            #
+            sub_config.message_queue_size[
+                aria.StreamingDataType.Rgb
+            ] = 1
+
+            #
+            # Security
+            #
+            options = aria.StreamingSecurityOptions()
+            options.use_ephemeral_certs = True
+
+            sub_config.security_options = options
+
+            streaming_client.subscription_config = sub_config
+
+            print(
+                "[ARIA] Subscription data type:",
+                streaming_client.subscription_config.subscriber_data_type
+            )
+
             observer = AriaObserver(frame_q)
 
-            streaming_client.set_streaming_client_observer(observer)
+            streaming_client.set_streaming_client_observer(
+                observer
+            )
 
-            #
-            # Subscribe
-            #
             print("[ARIA] Subscribing...")
 
             streaming_client.subscribe()
 
-            print("[ARIA] Subscription active")
+            print("[ARIA] subscribed?", streaming_client.is_subscribed())
 
-            #
-            # Keep thread alive
-            #
+
             while True:
-                time.sleep(1)
+                cv2.waitKey(1)
+                time.sleep(0.01)
 
         except Exception as e:
             print(f"[ARIA] Worker fatal error: {e}")
@@ -279,6 +282,8 @@ def main(video_path: str = None, fps: float = 0.5):
     # --- Thread 2: frame to vision ---
     def vision_worker():
         try:
+
+            print("[VISION] Worker started, waiting for frames...")
 
             # pull from frame queue
             while True:
@@ -309,6 +314,8 @@ def main(video_path: str = None, fps: float = 0.5):
 
     # --- Thread 3: TTS ---
     def tts_worker():
+
+        print("[TTS] Worker started, waiting for sentences...")
 
         #Start by generating the audio for the generic phrase
         generic_sentence = "This is a nice artwork let me tell you more about it !"
@@ -404,7 +411,6 @@ def main(video_path: str = None, fps: float = 0.5):
     #streaming: start aria worker
     t_aria = threading.Thread(
         target=aria_worker,
-        args=(frame_q,),
         daemon=True
     )
     t_aria.start()
