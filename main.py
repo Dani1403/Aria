@@ -98,7 +98,7 @@ def main(video_path: str = None, fps: float = 0.5):
                 )
                 if not success:
                     return
-                if frame_q.qsize() >= 10:
+                if frame_q.qsize() >= 1:
                     return
                 frame_q.put(
                     (time.time(), jpeg.tobytes()),
@@ -248,6 +248,8 @@ def main(video_path: str = None, fps: float = 0.5):
             sentence_count = 0
             MAX_SENTENCES = 4
 
+            in_artwork = False
+
             while True:
                 sentence, frame_timestamp = sentence_q.get()
 
@@ -258,7 +260,21 @@ def main(video_path: str = None, fps: float = 0.5):
                 # HANDLE NONE
                 # -------------------------
                 if sentence.strip() == "NONE":
-                    print("Got NONE skipping TTS.")
+                    print(f"Got NONE on frame with timestamp {frame_timestamp} skipping TTS.")
+
+
+                    if in_artwork:
+                        print("End of artwork description.")
+
+                        # empty audio queue to stop any pending audio from playing after the artwork is gone
+                        while not audio_q.empty():
+                            try:
+                                audio_q.get_nowait()
+                            except queue.Empty:
+                                break
+
+                    in_artwork = False
+
                     continue
 
                 # -------------------------
@@ -288,6 +304,8 @@ def main(video_path: str = None, fps: float = 0.5):
                     seen_artworks.add(artwork_name)
                     allow_description = True
                     sentence_count = 0
+                   
+                    in_artwork = True
 
                     print(f" NEW artwork {artwork_name}")
 
