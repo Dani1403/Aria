@@ -16,6 +16,43 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 
 ---
 
+## 2026-05-20 — Arthur — Streaming Aria branché + fluidification
+
+Première session avec les vraies lunettes branchées. Trois avancées :
+
+### 1. Streaming Aria fonctionnel (workaround)
+
+Au départ on voulait lancer le streaming Aria directement depuis notre `main.py` (intégrer l'appel SDK dans le pipeline). Ça ne partait pas — le stream ne s'initialisait pas correctement quand on l'embarquait dans notre code.
+
+**Workaround adopté** : on lance d'abord le **code officiel Project Aria** (script de streaming fourni par Meta) dans un terminal séparé, puis on démarre notre `main.py` qui se connecte au flux déjà actif. Ça marche de bout en bout. Pas idéal en termes de DX (deux commandes à lancer dans l'ordre), mais ça débloque tout le reste — on peut enfin tester le pipeline complet sur du vrai flux Aria.
+
+> À reprendre plus tard : comprendre pourquoi le lancement embarqué échoue (problème d'init du client SDK ? thread principal ? conflit asyncio/threading ?) pour pouvoir tout unifier dans une seule commande.
+
+### 2. Réduction de la taille de la queue
+
+Le pipeline était laggy : trop de frames en attente faisaient s'accumuler du retard entre ce que voyait l'utilisateur et ce qu'il entendait. On a **réduit la taille de la queue** (probablement `frame_q` ou `sentence_q`, à confirmer dans le code) — résultat : pipeline plus fluide, moins de décalage perçu.
+
+Logique sous-jacente : avec une queue plus petite, on jette les frames anciennes plus vite et on traite ce qui est **réellement devant l'utilisateur maintenant**, plutôt que de descendre une pile de frames périmées.
+
+### 3. Arrêt audio quand l'œuvre disparaît du champ
+
+Avant : si l'utilisateur quittait une œuvre en plein milieu du guide, l'audio continuait jusqu'au bout (toutes les phrases déjà mises en queue TTS étaient jouées). Comportement frustrant — le visiteur passe à autre chose mais entend encore le commentaire de l'œuvre précédente.
+
+**Solution** : quand on détecte que l'image (l'œuvre) a disparu du champ, on **vide la queue TTS**. L'audio s'arrête, le pipeline est prêt à enchaîner sur la prochaine œuvre sans traîner de résidu.
+
+C'est un premier morceau de la "logique de continuation/arrêt" prévue pour les semaines 2-3 — implémenté plus tôt que prévu parce que ça devenait gênant dès qu'on testait sur flux réel.
+
+**Fait :** streaming Aria opérationnel via lancement séparé du SDK officiel ; queue réduite → pipeline plus fluide ; vidage de la queue TTS quand l'œuvre sort du champ.
+**Bloqué :** lancement du streaming Aria depuis notre `main.py` ne fonctionne pas, on contourne en lançant le SDK Meta à côté.
+**Prochain :**
+- Écrire un **script bash** pour simplifier le lancement (enchaîner automatiquement : SDK Aria officiel → notre `main.py`) afin de masquer le workaround "deux commandes" derrière un seul `./run.sh`.
+- **Reprise du guide** : si l'utilisateur quitte une œuvre puis y revient plus tard, reprendre la lecture **là où elle s'était arrêtée** (et non rejouer depuis le début, ni considérer l'œuvre comme nouvelle). Implique de stocker par œuvre l'index de la dernière phrase jouée, et au retour : retrouver l'œuvre dans `seen_artworks`, recharger les phrases restantes, repartir de là. À articuler avec le vidage de queue TTS implémenté aujourd'hui (le "stop" doit mémoriser où on s'est arrêté).
+- Commencer le benchmark TTS prévu cette semaine.
+
+**Décisions :** on assume le workaround "deux commandes" pour l'instant — débloquer le reste prime sur l'élégance ; queue plus petite = on privilégie la fraîcheur des frames sur le débit.
+
+---
+
 ## 2026-05-11 — Arthur — État des lieux initial
 
 Première entrée du journal. Récap de tout ce qui a été construit jusqu'ici pour qu'on parte sur une base commune.
