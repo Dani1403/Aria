@@ -269,7 +269,7 @@ def main(video_path: str = None, fps: float = 0.5):
                         # empty audio queue to stop any pending audio from playing after the artwork is gone
                         while not audio_q.empty():
                             try:
-                                audio_q.get_nowait()
+                                # artwork_audio[current_artwork] = artwork_audio.get(
                             except queue.Empty:
                                 break
 
