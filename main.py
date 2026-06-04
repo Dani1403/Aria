@@ -36,7 +36,7 @@ def normalize_artwork(name: str) -> str:
     return name
 
 #TODO : NOT GOOD
-def is_similar_artwork(new_name: str, seen: set, threshold: float = 0.5) -> bool:
+def is_similar_artwork(new_name: str, seen: dict, threshold: float = 0.5):
     """Check if new_name is similar to any name in the seen set.
 
     Uses word overlap ratio: if >= threshold of words match, it's a duplicate.
@@ -50,8 +50,8 @@ def is_similar_artwork(new_name: str, seen: set, threshold: float = 0.5) -> bool
         common = new_words & seen_words
         similarity = max(len(common) / len(new_words), len(common) / len(seen_words))
         if similarity >= threshold:
-            return True
-    return False
+            return seen_name
+    return None
 
 latency_start = {"t": None, 
                  "ux_done": False,
@@ -243,12 +243,14 @@ def main(video_path: str = None, fps: float = 0.5):
                         generic_sentence, client)
 
         try:
-            seen_artworks = set()
+            seen_artworks = dict()
             allow_description = False
             sentence_count = 0
             MAX_SENTENCES = 4
 
             in_artwork = False
+            out_artwork = True
+            current_artwork = None
 
             while True:
                 sentence, frame_timestamp = sentence_q.get()
@@ -269,12 +271,15 @@ def main(video_path: str = None, fps: float = 0.5):
                         # empty audio queue to stop any pending audio from playing after the artwork is gone
                         while not audio_q.empty():
                             try:
-                                audio_q.get_nowait()
+                                #audio_q.get_nowait()
+                                seen_artworks[current_artwork].append(
+                                    audio_q.get_nowait())
                             except queue.Empty:
                                 break
 
                     in_artwork = False
-
+                    out_artwork = True
+                    allow_description = False
                     continue
 
                 # -------------------------
@@ -288,10 +293,33 @@ def main(video_path: str = None, fps: float = 0.5):
                     print(f"Detected artwork: {artwork_name}")
 
                     #check against ALL previously seen artworks
-                    if is_similar_artwork(artwork_name, seen_artworks):
-                        print(f"Similar artwork already seen, skipping: {artwork_name}")
-                        allow_description = False
-                        continue
+                    similar = is_similar_artwork(artwork_name, seen_artworks)
+                    if similar is not None:
+
+                        if out_artwork:
+
+                            #We were out of artwork and now we re enter it.
+                            #We can then continue explaining
+                            in_artwork = True
+                            out_artwork = False
+                            allow_description = True   
+                            sentence_count = 0
+
+                            current_artwork = similar
+
+                            saved = seen_artworks[similar]
+                            for s in saved:
+                                audio_q.put(s)
+
+                            seen_artworks[similar] = []
+
+                            continue
+
+
+                        else:
+                            print(f"Similar artwork already seen, skipping: {artwork_name}")
+                            allow_description = False
+                            continue
 
                     # NEW artwork
 
@@ -300,12 +328,14 @@ def main(video_path: str = None, fps: float = 0.5):
                     latency_start["ux_done"] = False
                     latency_start["real_done"] = False
 
-
-                    seen_artworks.add(artwork_name)
+                    seen_artworks[artwork_name] = []
                     allow_description = True
                     sentence_count = 0
                    
                     in_artwork = True
+                    out_artwork = False
+
+                    current_artwork = artwork_name
 
                     print(f" NEW artwork {artwork_name}")
 
