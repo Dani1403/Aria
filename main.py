@@ -242,6 +242,8 @@ def main(video_path: str = None, fps: float = 0.5):
         generic_audio = generate_sentence_audio(
                         generic_sentence, client)
 
+        #TODO : vary generic sentences.
+
         try:
             seen_artworks = dict()
             allow_description = False
@@ -300,6 +302,9 @@ def main(video_path: str = None, fps: float = 0.5):
 
                             #We were out of artwork and now we re enter it.
                             #We can then continue explaining
+
+                            #TODO: Add generic sentence like "welcome back" with name of artwork
+
                             in_artwork = True
                             out_artwork = False
                             allow_description = True   
