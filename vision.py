@@ -28,7 +28,7 @@ SYSTEM_PROMPT = (
     "- Output ONLY the word NONE (no punctuation, no explanation)\n\n"
 
     "If there is something notable:\n"
-    "- Provide a concise but rich explanation (3 to 5 sentences)\n"
+    "- Provide a concise but rich explanation (5 to 10 sentences)\n"
     "- The first sentence should identify it (name or type)\n"
     "and should be of the format: ARTWORK: [name]\n\n"
 
@@ -158,7 +158,7 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
         print(f"Vision API error on frame, skipping: {e}")
         return
 
-    max_sentences = 5
+    max_sentences = 10
     count = 0
     buffer = ""
 

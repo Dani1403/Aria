@@ -63,7 +63,7 @@ def main(video_path: str = None, fps: float = 0.5):
 
     load_dotenv()
 
-    sentence_q = queue.Queue(maxsize=20)
+    sentence_q = queue.Queue(maxsize=50)
     audio_q = queue.Queue()
 
     frame_q = queue.Queue()
@@ -215,7 +215,7 @@ def main(video_path: str = None, fps: float = 0.5):
 
 
                 # Wait until TTS has caught up before processing a new frame
-                while sentence_q.qsize() >= 5:
+                while sentence_q.qsize() >= 10:
                     time.sleep(0.5)
                 #attach a timestamp to measure latency to first audio
                 timestamp = time.time()
