@@ -15,6 +15,34 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 - Avant de commencer une session : lire la dernière entrée de l'autre (2 min).
 
 ---
+## 2026-06-25 — Daniel — Arrêt propre Ctrl+C + run.sh autonome + détection IP WiFi
+
+### 1. Arrêt propre Ctrl+C dans `main.py`
+
+Gros nettoyage de `main.py` : suppression d'un long bloc de code commenté (ancienne tentative d'init du streaming directement depuis notre code — le workaround `streaming_start.py` séparé est désormais assumé).
+
+Sur le fond : ajout d'une fonction `stop_aria_streaming()` qui appelle `aria streaming stop` via subprocess à la sortie. Correction d'un crash C++ (`terminate called without an active exception`) qui apparaissait à chaque Ctrl+C — la cause était que Python tuait le thread Aria brutalement. Résolu en stockant une référence au `streaming_client` dans `_aria_client[]` dès après le `subscribe()`, puis en appelant `unsubscribe()` explicitement dans le `finally` avant de quitter. Les workers vision et TTS sont passés en **daemon threads** pour ne plus bloquer la sortie. Le `finally` garantit dans l'ordre : `quit_audio()` → `unsubscribe()` → `streaming stop`, sur tout chemin de sortie y compris Ctrl+C. Le `__main__` est lui aussi wrappé pour attraper un Ctrl+C pendant l'init.
+
+### 2. `run.sh` — script complet et autonome
+
+Le script existant ne faisait que lancer `streaming_start.py` puis `main.py`. Refonte pour en faire un script de lancement zéro-friction :
+
+- **Détection OS** (`uname -s`) et fonction `ping_once()` pour absorber la différence de flags `ping` entre Linux et macOS.
+- **Vérifications de dépendances avec installation automatique** : Python (venv warning si absent, exit si pas de python du tout), `adb` (apt-get sur Linux, brew sur macOS si disponible), `aria` CLI (exit avec message clair si absent), `net-tools` pour `arp` (Linux uniquement, macOS l'a en natif), `streaming_start.py` (vérification que le fichier existe avant de l'appeler).
+- **Guards** : ADB ne redémarre que si aucun device n'est connecté ; `aria auth pair` ne tourne que si le SDK n'est pas encore authentifié (ne devrait arriver qu'à la première utilisation sur une nouvelle machine).
+- **`STREAM_WAIT=10`** : le sleep post-streaming est maintenant une variable nommée en haut du bloc, facile à ajuster.
+
+### 3. Détection automatique de l'IP Aria en WiFi
+
+Ajout d'une détection d'IP par scan ARP filtré sur le préfixe MAC des lunettes (`2c:26:17`). Logique : on tente d'abord l'IP mise en cache dans `.aria_last_ip` (ping pour vérifier), et on ne scanne l'ARP que si elle est injoignable. L'IP trouvée est sauvegardée pour la session suivante. Fonctionne sur Linux et macOS.
+
+**Fait :** crash C++ à la sortie corrigé ; Ctrl+C propre sans traceback ; run.sh autonome qui s'installe et se configure tout seul ; détection IP WiFi automatique par ARP avec cache.
+**Bloqué :** —
+**Prochain :**
+- Tester le run.sh sur le Mac d'Arthur (différences potentielles à remonter).
+- Confirmer que l'authentification SDK persiste bien d'un jour à l'autre.
+
+---
 ## 2026-06-24 — Daniel — WiFi fonctionnel + arrêt/reprise audio
 
 ### 1. Streaming WiFi opérationnel — plus besoin du câble USB
