@@ -10,7 +10,7 @@
 #   ./run.sh wifi profile18              # WiFi + explicit profile, IP auto-detected
 #   ./run.sh wifi profile18 172.20.10.2  # WiFi + explicit IP, skips ARP scan
 #
-# Note: ARP auto-detection requires net-tools (arp). Installed automatically if missing.
+# Dependencies: adb, aria CLI, net-tools (arp for WiFi). Installed automatically where possible.
 #
 set -euo pipefail
 
@@ -37,14 +37,41 @@ elif [[ -f .aria_env/bin/activate ]]; then
     source .aria_env/bin/activate
 elif [[ -f ~/aria_env/bin/activate ]]; then
     source ~/aria_env/bin/activate
+else
+    echo "[run] WARNING: no virtual environment found, using system Python"
 fi
-PYTHON="$(command -v python3 || command -v python)"
+PYTHON="$(command -v python3 || command -v python || true)"
+if [[ -z "$PYTHON" ]]; then
+    echo "[run] ERROR: python3/python not found in PATH."
+    exit 1
+fi
 
+
+echo "[run] checking adb setup"
+if ! command -v adb &>/dev/null; then
+    if [[ "$OS" == "Darwin" ]]; then
+        if command -v brew &>/dev/null; then
+            echo "[run] adb not found, installing via brew..."
+            brew install --cask android-platform-tools
+        else
+            echo "[run] ERROR: adb not found — install it with: brew install --cask android-platform-tools"
+            exit 1
+        fi
+    else
+        echo "[run] adb not found, installing..."
+        sudo apt-get install -y adb
+    fi
+fi
 if ! adb devices | grep -q 'device$'; then
     echo "[run] ADB kill and restart for clean run"
     adb kill-server
     sleep 1
     adb start-server
+fi
+
+if ! command -v aria &>/dev/null; then
+    echo "[run] ERROR: 'aria' CLI not found in PATH. Install the Aria SDK and ensure 'aria' is on your PATH."
+    exit 1
 fi
 
 # Need usb connection for this step
@@ -97,11 +124,17 @@ if [[ -n "$DEVICE_IP" ]]; then
     START_ARGS+=(--device-ip "$DEVICE_IP")
 fi
 
+if [[ ! -f "projectaria_client_sdk_samples/streaming_start.py" ]]; then
+    echo "[run] ERROR: streaming_start.py not found. Check that projectaria_client_sdk_samples/ is present."
+    exit 1
+fi
+
 echo "[run] Start streaming Aria (interface=$INTERFACE, profile=$PROFILE)..."
 "$PYTHON" projectaria_client_sdk_samples/streaming_start.py "${START_ARGS[@]}"
 
-echo "[run] Wait for flux init ..."
-sleep 10
+STREAM_WAIT=10  # seconds to wait for the stream to initialise
+echo "[run] Waiting ${STREAM_WAIT}s for stream to initialise..."
+sleep "$STREAM_WAIT"
 
 echo "[run] pipeline starting (main.py)..."
 exec "$PYTHON" main.py
