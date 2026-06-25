@@ -15,6 +15,34 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 - Avant de commencer une session : lire la dernière entrée de l'autre (2 min).
 
 ---
+## 2026-06-24 — Daniel — WiFi fonctionnel + arrêt/reprise audio
+
+### 1. Streaming WiFi opérationnel — plus besoin du câble USB
+
+Grande avancée : les lunettes Aria fonctionnent désormais en streaming **WiFi**, sans câble USB. La configuration retenue : connecter les lunettes au **hotspot du téléphone**, avec l'ordinateur et la VM également connectés à ce même hotspot. Le flux arrive correctement sur la VM et le pipeline tourne normalement.
+
+**Point d'attention** : l'IP des lunettes peut changer d'une session à l'autre. Il faut vérifier l'IP assignée aux lunettes avant chaque lancement — à fixer dans la config ou dans `run.sh` pour éviter d'avoir à le retrouver manuellement à chaque fois.
+
+### 2. Arrêt et reprise audio sur la même œuvre
+
+Implémentation de la logique d'arrêt/reprise : quand l'utilisateur détourne le regard d'une œuvre puis revient dessus, l'audio reprend là où il s'était arrêté (plutôt que de recommencer depuis le début ou de relancer une nouvelle génération complète).
+
+**Bug identifié** : dans certains cas, l'explication repart quand même depuis le début au lieu de reprendre à mi-parcours. Cause non encore isolée — il faut instrumenter le debug pour logger quelles phrases sont générées, à quel moment, et à quel index on reprend. Suspicion : le `seen_artworks` / la logique de reprise ne restaure pas correctement l'index de phrase au moment du retour sur l'œuvre.
+
+### 3. Agrandissement des queues
+
+Les queues ont été agrandies. Objectif : tant que l'utilisateur regarde une œuvre, lui fournir des explications en continu sans que le pipeline soit throttlé par une queue trop petite. La contrainte inverse de la session précédente (où on avait *réduit* les queues pour éviter le lag) — ici on parie sur le fait que l'utilisateur reste devant une œuvre suffisamment longtemps pour que des phrases plus nombreuses en attente soient utiles plutôt que périmées.
+
+**Fait :** streaming WiFi via hotspot téléphone opérationnel ; arrêt/reprise audio sur même œuvre implémenté ; queues agrandies.
+**Bloqué :** bug de reprise depuis le début au lieu du bon index — à débugger en loggant les phrases générées et les timestamps de reprise.
+**Prochain :**
+- Isoler le bug de reprise : ajouter des logs sur l'index de phrase sauvegardé au stop et rechargé au retour.
+- Fixer l'IP des lunettes dans la config / `run.sh` pour éviter de la chercher manuellement à chaque session WiFi.
+- Valider que les queues plus grandes n'introduisent pas de décalage perceptible (re-tester la fluidité perçue).
+**Décisions :** on assume le hotspot téléphone comme setup WiFi de référence pour les tests ; on privilégie la continuité des explications (queues larges) sur la fraîcheur des frames pour les sessions longues devant une œuvre.
+
+
+---
 
 ## 2026-05-20 — Arthur — Streaming Aria branché + fluidification
 
