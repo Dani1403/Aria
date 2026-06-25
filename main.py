@@ -5,6 +5,7 @@ import time
 import queue
 import shutil
 import threading
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -53,10 +54,21 @@ def is_similar_artwork(new_name: str, seen: dict, threshold: float = 0.5):
             return seen_name
     return None
 
-latency_start = {"t": None, 
+latency_start = {"t": None,
                  "ux_done": False,
                  "real_done": False
                  }
+
+
+def stop_aria_streaming():
+    try:
+        subprocess.run(["aria", "streaming", "stop"], check=False, timeout=30)
+    except FileNotFoundError:
+        print("[ARIA] 'aria' CLI not found in PATH, skipping streaming stop.")
+    except subprocess.TimeoutExpired:
+        print("[ARIA] streaming stop timed out.")
+    except Exception as e:
+        print(f"[ARIA] streaming stop failed: {e}")
 
 
 def main(video_path: str = None, fps: float = 0.5):
@@ -117,48 +129,11 @@ def main(video_path: str = None, fps: float = 0.5):
         def on_streaming_client_failure(self, reason, message):
             print(f"[ARIA] Streaming Client Failure: {reason}: {message}")
 
+    _aria_client = []  # holds the StreamingClient once subscribed, for clean shutdown
+
     def aria_worker():
         try:
 
-            # print("[ARIA] Connecting...")
-
-            # aria.set_log_level(aria.Level.Debug)
-
-            # client = aria.DeviceClient()
-
-            # device_config = aria.DeviceClientConfig()
-            # client.set_client_config(device_config)
-
-            # device = client.connect()
-
-            # print("[ARIA] Connected")
-
-            # streaming_manager = device.streaming_manager
-
-            # streaming_config = streaming_manager.streaming_config
-            # #streaming_config = aria.StreamingConfig()
-
-            # streaming_config.streaming_interface = (
-            #     aria.StreamingInterface.Usb
-            # )
-
-            # streaming_config.profile_name = "profile18"
-
-            # streaming_config.security_options.use_ephemeral_certs = True
-            # streaming_manager.streaming_config = streaming_config
-
-            # print(
-            #     f"[ARIA] Streaming interface = "
-            #     f"{streaming_config.streaming_interface}"
-            # )
-
-            # print("[ARIA] Starting streaming...")
-
-            # streaming_manager.start_streaming()
-
-            # print("[ARIA] Streaming started")
-
-            # streaming_client = streaming_manager.streaming_client
             streaming_client = aria.StreamingClient()
 
             sub_config = streaming_client.subscription_config
@@ -193,6 +168,7 @@ def main(video_path: str = None, fps: float = 0.5):
             print("[ARIA] Subscribing...")
 
             streaming_client.subscribe()
+            _aria_client.append(streaming_client)
 
             print("[ARIA] subscribed?", streaming_client.is_subscribed())
 
@@ -382,8 +358,8 @@ def main(video_path: str = None, fps: float = 0.5):
     )
     t_aria.start()
 
-    t_vision = threading.Thread(target=vision_worker)
-    t_tts = threading.Thread(target=tts_worker)
+    t_vision = threading.Thread(target=vision_worker, daemon=True)
+    t_tts = threading.Thread(target=tts_worker, daemon=True)
 
     t_vision.start()
     t_tts.start()
@@ -392,14 +368,12 @@ def main(video_path: str = None, fps: float = 0.5):
     # --- Main thread: playback ---
     init_audio()
 
+    interrupted = False
     try:
-
         while True:
-
             audio_type, audio_bytes = audio_q.get()
             if audio_bytes is STREAM_DONE:
                 break
-
 
             if latency_start["t"] is not None:
 
@@ -418,22 +392,38 @@ def main(video_path: str = None, fps: float = 0.5):
                     latency_start["ux_done"] = False
                     latency_start["real_done"] = False
 
-
             play_audio_bytes(audio_bytes)
+
+    except KeyboardInterrupt:
+        print("\n[MAIN] Interrupted, shutting down...")
+        interrupted = True
 
     finally:
         quit_audio()
+        if _aria_client:
+            try:
+                _aria_client[0].unsubscribe()
+                print("[ARIA] Unsubscribed cleanly.")
+            except Exception as e:
+                print(f"[ARIA] unsubscribe() failed: {e}")
+        stop_aria_streaming()
 
-    t_vision.join()
-    t_tts.join()
+    if not interrupted:
+        t_vision.join()
+        t_tts.join()
 
-    if vision_error:
-        print(f"Vision error: {vision_error[0]}")
-    if tts_error:
-        print(f"TTS error: {tts_error[0]}")
+        if vision_error:
+            print(f"Vision error: {vision_error[0]}")
+        if tts_error:
+            print(f"TTS error: {tts_error[0]}")
 
-    print("\nPipeline complete.")
+        print("\nPipeline complete.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[MAIN] Interrupted during init, shutting down...")
+        stop_aria_streaming()
+        sys.exit(0)

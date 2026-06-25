@@ -368,3 +368,4 @@ FodyWeavers.xsd
 *.mp4
 debug_frames/
 stream_chunks/
+.aria_last_ip
