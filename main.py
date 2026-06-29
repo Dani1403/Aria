@@ -238,11 +238,12 @@ def main(video_path: str = None, fps: float = 0.5):
 
         def _pregenerate():
             try:
-                for s in GENERIC_OPENING_SENTENCES:
-                    generic_audio_pool.append(generate_sentence_audio(s, client))
-                for s in REENTRY_SENTENCES:
-                    reentry_audio_pool.append(generate_sentence_audio(s, client))
-                print("[TTS] Pre-generation done.")
+                from itertools import zip_longest
+                for g, r in zip_longest(GENERIC_OPENING_SENTENCES, REENTRY_SENTENCES):
+                    if g:
+                        generic_audio_pool.append(generate_sentence_audio(g, client))
+                    if r:
+                        reentry_audio_pool.append(generate_sentence_audio(r, client))
             except Exception as e:
                 print(f"[TTS] Pre-generation failed: {e}")
             finally:
