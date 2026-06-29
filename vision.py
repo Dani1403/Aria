@@ -127,7 +127,7 @@ def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None
 
 
 
-def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sentence_queue: queue.Queue, client) -> None:
+def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sentence_queue: queue.Queue, client, max_sentences: int = 10) -> None:
 
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -157,7 +157,6 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
         print(f"Vision API error on frame, skipping: {e}")
         return
 
-    max_sentences = 10
     count = 0
     buffer = ""
 

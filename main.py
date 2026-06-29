@@ -25,6 +25,8 @@ import numpy as np
 
 from openai import OpenAI
 
+MAX_SENTENCES = 10
+
 def normalize_artwork(name: str) -> str:
     name = name.lower().strip()
     name = re.sub(r'[^a-z0-9 ]', '', name)
@@ -194,7 +196,7 @@ def main(video_path: str = None, fps: float = 0.5):
                 # with open(f"debug_frames/frame_{timestamp}.jpg", "wb") as f:
                 #     f.write(jpeg)
                 try:
-                    stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client)
+                    stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client, MAX_SENTENCES)
                 except Exception as e:
                     #print(f"Error processing frame {idx}, skipping: {e}")
                     print(f"Error processing frame")
@@ -255,7 +257,6 @@ def main(video_path: str = None, fps: float = 0.5):
             seen_artworks = dict()
             allow_description = False
             sentence_count = 0
-            MAX_SENTENCES = 4
 
             in_artwork = False
             out_artwork = True
