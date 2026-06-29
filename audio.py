@@ -47,10 +47,18 @@ def quit_audio() -> None:
 
 
 def play_audio_bytes(audio_bytes):
+    try:
+        audio_file = io.BytesIO(audio_bytes)
+        pygame.mixer.music.load(audio_file)
+        pygame.mixer.music.play()
 
-    audio_file = io.BytesIO(audio_bytes)
-    pygame.mixer.music.load(audio_file)
-    pygame.mixer.music.play()
+        clock = pygame.time.Clock()
+        while pygame.mixer.music.get_busy():
+            clock.tick(10)
 
-    while pygame.mixer.music.get_busy():
-        pygame.time.Clock().tick(10)
+    except pygame.error as e:
+        raise RuntimeError(f"Audio playback error: {e}")
+
+    finally:
+        pygame.mixer.music.stop()
+        pygame.mixer.music.unload()

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from PIL import Image
 from openai import OpenAI, APIError, APIConnectionError
-import base64
 
 SYSTEM_PROMPT = (
     "You are a tour guide in an augmented reality system.\n\n"
@@ -168,7 +167,6 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
             buffer += delta.content
 
             while True:
-                import re
                 match = re.search(r'[.!?](?:\s|$)', buffer)
                 if not match:
                     break

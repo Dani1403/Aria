@@ -1,5 +1,6 @@
 """Museum Audio Guide - Sentence-by-sentence streaming pipeline.
 """
+import re
 import sys
 import time
 import queue
@@ -28,12 +29,8 @@ from openai import OpenAI
 
 def normalize_artwork(name: str) -> str:
     name = name.lower().strip()
-
-    # remove punctuation & extra spaces
-    import re
     name = re.sub(r'[^a-z0-9 ]', '', name)
     name = re.sub(r'\s+', ' ', name)
-
     return name
 
 #TODO : NOT GOOD
@@ -192,7 +189,7 @@ def main(video_path: str = None, fps: float = 0.5):
 
                 # Wait until TTS has caught up before processing a new frame
                 while sentence_q.qsize() >= 10:
-                    time.sleep(0.5)
+                    time.sleep(0.05)
                 #attach a timestamp to measure latency to first audio
                 timestamp = time.time()
                 # print(f"Processing frame {timestamp} with timestamp {timestamp:.2f}")
@@ -237,10 +234,23 @@ def main(video_path: str = None, fps: float = 0.5):
             "Back again — there's still more to explore here.",
         ]
 
-        print("[TTS] Pre-generating opening and re-entry audio...")
-        generic_audio_pool = [generate_sentence_audio(s, client) for s in GENERIC_OPENING_SENTENCES]
-        reentry_audio_pool = [generate_sentence_audio(s, client) for s in REENTRY_SENTENCES]
-        print("[TTS] Pre-generation done.")
+        pools_ready = threading.Event()
+        generic_audio_pool = []
+        reentry_audio_pool = []
+
+        def _pregenerate():
+            try:
+                for s in GENERIC_OPENING_SENTENCES:
+                    generic_audio_pool.append(generate_sentence_audio(s, client))
+                for s in REENTRY_SENTENCES:
+                    reentry_audio_pool.append(generate_sentence_audio(s, client))
+                print("[TTS] Pre-generation done.")
+            except Exception as e:
+                print(f"[TTS] Pre-generation failed: {e}")
+            finally:
+                pools_ready.set()
+
+        threading.Thread(target=_pregenerate, daemon=True).start()
 
         try:
             seen_artworks = dict()
@@ -271,9 +281,10 @@ def main(video_path: str = None, fps: float = 0.5):
                         # empty audio queue to stop any pending audio from playing after the artwork is gone
                         while not audio_q.empty():
                             try:
-                                #audio_q.get_nowait()
-                                seen_artworks[current_artwork].append(
-                                    audio_q.get_nowait())
+                                item = audio_q.get_nowait()
+                                audio_type, _ = item
+                                if audio_type != "GENERIC":
+                                    seen_artworks[current_artwork].append(item)
                             except queue.Empty:
                                 break
 
@@ -301,7 +312,10 @@ def main(video_path: str = None, fps: float = 0.5):
                             #We were out of artwork and now we re enter it.
                             #We can then continue explaining
 
-                            audio_q.put(random.choice(reentry_audio_pool))
+                            while not reentry_audio_pool and not pools_ready.is_set():
+                                time.sleep(0.05)
+                            if reentry_audio_pool:
+                                audio_q.put(("REENTRY", random.choice(reentry_audio_pool)))
 
                             in_artwork = True
                             out_artwork = False
@@ -343,7 +357,10 @@ def main(video_path: str = None, fps: float = 0.5):
                     print(f" NEW artwork {artwork_name}")
 
                     #play the generic phrase in order to fill the gap while the TTS is generating the first sentence
-                    audio_q.put(("GENERIC", random.choice(generic_audio_pool)))
+                    while not generic_audio_pool and not pools_ready.is_set():
+                        time.sleep(0.05)
+                    if generic_audio_pool:
+                        audio_q.put(("GENERIC", random.choice(generic_audio_pool)))
 
                     continue  
 
@@ -367,7 +384,7 @@ def main(video_path: str = None, fps: float = 0.5):
             tts_error.append(e)
 
         finally:
-            audio_q.put(STREAM_DONE)
+            audio_q.put((STREAM_DONE, STREAM_DONE))
 
     # Start threads
 
