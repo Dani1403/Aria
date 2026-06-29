@@ -213,12 +213,34 @@ def main(video_path: str = None, fps: float = 0.5):
 
         print("[TTS] Worker started, waiting for sentences...")
 
-        #Start by generating the audio for the generic phrase
-        generic_sentence = "This is a nice artwork let me tell you more about it !"
-        generic_audio = generate_sentence_audio(
-                        generic_sentence, client)
+        import random
 
-        #TODO : vary generic sentences.
+        GENERIC_OPENING_SENTENCES = [
+            "Let me tell you about this piece.",
+            "Here's something worth knowing about this work.",
+            "This one has quite a story behind it.",
+            "Take a closer look — there's more here than meets the eye.",
+            "Allow me to shed some light on this artwork.",
+            "There's a fascinating history behind what you're looking at.",
+            "Let me walk you through what makes this piece special.",
+            "You've picked a great one — let me tell you more.",
+            "This artwork has a lot to say. Let me help you hear it.",
+            "Step closer — I'll fill you in on this piece.",
+        ]
+
+        REENTRY_SENTENCES = [
+            "You've seen this one before — let's continue.",
+            "Welcome back. There's more to discover here.",
+            "You're back — let me pick up where we left off.",
+            "Good to have you back. Let's keep going.",
+            "You've returned to this piece. Let me continue.",
+            "Back again — there's still more to explore here.",
+        ]
+
+        print("[TTS] Pre-generating opening and re-entry audio...")
+        generic_audio_pool = [generate_sentence_audio(s, client) for s in GENERIC_OPENING_SENTENCES]
+        reentry_audio_pool = [generate_sentence_audio(s, client) for s in REENTRY_SENTENCES]
+        print("[TTS] Pre-generation done.")
 
         try:
             seen_artworks = dict()
@@ -279,11 +301,11 @@ def main(video_path: str = None, fps: float = 0.5):
                             #We were out of artwork and now we re enter it.
                             #We can then continue explaining
 
-                            #TODO: Add generic sentence like "welcome back" with name of artwork
+                            audio_q.put(random.choice(reentry_audio_pool))
 
                             in_artwork = True
                             out_artwork = False
-                            allow_description = True   
+                            allow_description = True
                             sentence_count = 0
 
                             current_artwork = similar
@@ -321,8 +343,7 @@ def main(video_path: str = None, fps: float = 0.5):
                     print(f" NEW artwork {artwork_name}")
 
                     #play the generic phrase in order to fill the gap while the TTS is generating the first sentence
-                    print(f"TTS: {generic_sentence}")
-                    audio_q.put(("GENERIC", generic_audio))
+                    audio_q.put(("GENERIC", random.choice(generic_audio_pool)))
 
                     continue  
 
