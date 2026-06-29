@@ -27,7 +27,9 @@ SYSTEM_PROMPT = (
     "- Output ONLY the word NONE (no punctuation, no explanation)\n\n"
 
     "If there is something notable:\n"
-    "- Provide a concise but rich explanation (5 to 10 sentences)\n"
+    "- Provide a rich, detailed explanation (12 to 18 sentences)\n"
+    "- Cover what it is, who made it, when, the style or technique, its history, "
+    "and an interesting anecdote or detail\n"
     "- The first sentence should identify it (name or type)\n"
     "and should be of the format: ARTWORK: [name]\n\n"
 
@@ -95,7 +97,7 @@ def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None
                     ],
                 },
             ],
-            max_tokens=300,
+            max_tokens=800,
             stream=True,
         )
     except (APIConnectionError, APIError) as e:
@@ -127,7 +129,7 @@ def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None
 
 
 
-def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sentence_queue: queue.Queue, client, max_sentences: int = 10) -> None:
+def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sentence_queue: queue.Queue, client, max_sentences: int=10) -> None:
 
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -150,7 +152,7 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
                     ],
                 },
             ],
-            max_tokens=300,
+            max_tokens=800,
             stream=True,
         )
     except (APIConnectionError, APIError) as e:

@@ -1,5 +1,6 @@
 """Museum Audio Guide - Sentence-by-sentence streaming pipeline.
 """
+import os
 import re
 import sys
 import time
@@ -15,6 +16,7 @@ from vision import stream_guide_sentences, stream_guide_sentences_from_bytes,STR
 from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
 from extract_frames import extract_frames_from_video
+from motion import WalkingDetector
 #from utils import pull_aria_recording
 #from stream import simulate_stream
 
@@ -25,7 +27,8 @@ import numpy as np
 
 from openai import OpenAI
 
-MAX_SENTENCES = 10
+MAX_SENTENCES = 18
+
 
 def normalize_artwork(name: str) -> str:
     name = name.lower().strip()
@@ -58,8 +61,15 @@ latency_start = {"t": None,
 
 
 def stop_aria_streaming():
+    cmd = ["aria"]
+    # Over Wi-Fi the USB/adb link may be unplugged, so the control connection
+    # must reach the glasses by IP. run.sh exports ARIA_DEVICE_IP in that case.
+    device_ip = os.environ.get("ARIA_DEVICE_IP")
+    if device_ip:
+        cmd += ["--device-ip", device_ip]
+    cmd += ["streaming", "stop"]
     try:
-        subprocess.run(["aria", "streaming", "stop"], check=False, timeout=30)
+        subprocess.run(cmd, check=False, timeout=30)
     except FileNotFoundError:
         print("[ARIA] 'aria' CLI not found in PATH, skipping streaming stop.")
     except subprocess.TimeoutExpired:
@@ -76,6 +86,16 @@ def main(video_path: str = None, fps: float = 0.5):
     audio_q = queue.Queue()
 
     frame_q = queue.Queue()
+
+    # Set while the user is walking (driven by the IMU). Used by tts_worker to
+    # ignore vision input while moving.
+    walking = threading.Event()
+    walking_detector = WalkingDetector(walking)
+
+    # Gates playback. Set when walking starts (after the current sentence ends)
+    # and released ONLY when the guide (re)starts an artwork — never just because
+    # the user stopped moving. So audio resumes on artwork detection, not on stop.
+    paused = threading.Event()
 
     vision_error = []
     tts_error = []
@@ -123,6 +143,8 @@ def main(video_path: str = None, fps: float = 0.5):
                 )
             except Exception as e:
                 print(e)
+        def on_imu_received(self, samples, imu_idx):
+            walking_detector.on_imu_received(samples, imu_idx)
         def on_streaming_client_failure(self, reason, message):
             print(f"[ARIA] Streaming Client Failure: {reason}: {message}")
 
@@ -136,13 +158,18 @@ def main(video_path: str = None, fps: float = 0.5):
             sub_config = streaming_client.subscription_config
 
             sub_config.subscriber_data_type = (
-                aria.StreamingDataType.Rgb 
+                aria.StreamingDataType.Rgb
+                | aria.StreamingDataType.Imu
                 # | aria.StreamingDataType.Slam
-                # | aria.StreamingDataType.Imu
             )
 
             sub_config.message_queue_size[
                 aria.StreamingDataType.Rgb
+            ] = 1
+            # Keep only the most recent IMU batch: we want a real-time walk/still
+            # decision, not a backlog.
+            sub_config.message_queue_size[
+                aria.StreamingDataType.Imu
             ] = 1
 
             options = aria.StreamingSecurityOptions()
@@ -191,7 +218,7 @@ def main(video_path: str = None, fps: float = 0.5):
                 while sentence_q.qsize() >= 10:
                     time.sleep(0.05)
                 #attach a timestamp to measure latency to first audio
-                timestamp = time.time()
+                #timestamp = time.time()
                 # print(f"Processing frame {timestamp} with timestamp {timestamp:.2f}")
                 # with open(f"debug_frames/frame_{timestamp}.jpg", "wb") as f:
                 #     f.write(jpeg)
@@ -240,12 +267,11 @@ def main(video_path: str = None, fps: float = 0.5):
 
         def _pregenerate():
             try:
-                from itertools import zip_longest
-                for g, r in zip_longest(GENERIC_OPENING_SENTENCES, REENTRY_SENTENCES):
-                    if g:
-                        generic_audio_pool.append(generate_sentence_audio(g, client))
-                    if r:
-                        reentry_audio_pool.append(generate_sentence_audio(r, client))
+                for s in GENERIC_OPENING_SENTENCES:
+                    generic_audio_pool.append(generate_sentence_audio(s, client))
+                for s in REENTRY_SENTENCES:
+                    reentry_audio_pool.append(generate_sentence_audio(s, client))
+                print("[TTS] Pre-generation done.")
             except Exception as e:
                 print(f"[TTS] Pre-generation failed: {e}")
             finally:
@@ -262,23 +288,19 @@ def main(video_path: str = None, fps: float = 0.5):
             out_artwork = True
             current_artwork = None
 
+            was_walking = False
+
             while True:
-                sentence, frame_timestamp = sentence_q.get()
-
-                if sentence is STREAM_DONE:
-                    break
-
-                # -------------------------
-                # HANDLE NONE
-                # -------------------------
-                if sentence.strip() == "NONE":
-                    print(f"Got NONE on frame with timestamp {frame_timestamp} skipping TTS.")
-
-
+                # Detect the still -> walk transition ourselves so we can pause
+                # the guide the moment the user starts moving.
+                is_walking = walking.is_set()
+                if is_walking and not was_walking:
                     if in_artwork:
-                        print("End of artwork description.")
-
-                        # empty audio queue to stop any pending audio from playing after the artwork is gone
+                        print("[TTS] Walking started: finishing current sentence, then pausing.")
+                        # Save everything still queued so this artwork can be
+                        # resumed later, right where we left off. The sentence
+                        # currently playing has already left the queue, so it
+                        # finishes normally (no abrupt cut).
                         while not audio_q.empty():
                             try:
                                 item = audio_q.get_nowait()
@@ -287,10 +309,30 @@ def main(video_path: str = None, fps: float = 0.5):
                                     seen_artworks[current_artwork].append(item)
                             except queue.Empty:
                                 break
+                        in_artwork = False
+                        out_artwork = True
+                        allow_description = False
+                    paused.set()
+                was_walking = is_walking
 
-                    in_artwork = False
-                    out_artwork = True
-                    allow_description = False
+                try:
+                    sentence, frame_timestamp = sentence_q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                if sentence is STREAM_DONE:
+                    break
+
+                # While walking, ignore all vision input: the guide only speaks
+                # when standing in front of an artwork, and resuming is driven by
+                # the next artwork detection once stopped.
+                if is_walking:
+                    continue
+
+                # -------------------------
+                # HANDLE NONE  (no longer pauses — movement is the pause trigger)
+                # -------------------------
+                if sentence.strip() == "NONE":
                     continue
 
                 # -------------------------
@@ -330,6 +372,8 @@ def main(video_path: str = None, fps: float = 0.5):
 
                             seen_artworks[similar] = []
 
+                            # Resume playback: same artwork detected again.
+                            paused.clear()
                             continue
 
 
@@ -362,7 +406,21 @@ def main(video_path: str = None, fps: float = 0.5):
                     if generic_audio_pool:
                         audio_q.put(("GENERIC", random.choice(generic_audio_pool)))
 
-                    continue  
+                    # Announce the artwork name at the start of the description.
+                    # The header "ARTWORK: <name>" is otherwise only used for
+                    # state, so without this the name is never spoken. Generated
+                    # on the fly; the GENERIC clip above plays meanwhile, so it
+                    # adds no perceptible latency. Use raw_name to keep casing.
+                    if raw_name:
+                        try:
+                            name_audio = generate_sentence_audio(f"This is {raw_name}.", client)
+                            audio_q.put(("NAME", name_audio))
+                        except Exception as e:
+                            print(f"[TTS] Name announcement failed: {e}")
+
+                    # Start playback: a new artwork is being described.
+                    paused.clear()
+                    continue
 
                 # -------------------------
                 # DESCRIPTION SENTENCES
@@ -409,6 +467,14 @@ def main(video_path: str = None, fps: float = 0.5):
     interrupted = False
     try:
         while True:
+            # Hold here while paused. Pausing is triggered by walking and is
+            # released only when the guide (re)starts an artwork — never just by
+            # standing still — so audio never restarts on stop alone. The
+            # sentence already playing is not interrupted: this gate is checked
+            # before pulling the next one.
+            while paused.is_set():
+                time.sleep(0.05)
+
             audio_type, audio_bytes = audio_q.get()
             if audio_bytes is STREAM_DONE:
                 break
@@ -430,6 +496,7 @@ def main(video_path: str = None, fps: float = 0.5):
                     latency_start["ux_done"] = False
                     latency_start["real_done"] = False
 
+            # Play the whole sentence to the end (never cut mid-sentence).
             play_audio_bytes(audio_bytes)
 
     except KeyboardInterrupt:

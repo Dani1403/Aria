@@ -16,9 +16,16 @@ from collections import deque
 from typing import Sequence
 
 import aria.sdk as aria
-import fastplotlib as fpl
 import numpy as np
 from common import ctrl_c_handler
+
+# fastplotlib is only needed by AriaVisualizer (the live plots). Keep the import
+# optional so importing BaseStreamingClientObserver (used by the pipeline) never
+# fails when fastplotlib isn't installed.
+try:
+    import fastplotlib as fpl
+except ImportError:
+    fpl = None
 
 from projectaria_tools.core.sensor_data import (
     BarometerData,
@@ -85,6 +92,11 @@ class AriaVisualizer:
     """
 
     def __init__(self):
+        if fpl is None:
+            raise ImportError(
+                "fastplotlib is required for AriaVisualizer. "
+                "Install it with: pip install fastplotlib"
+            )
         # Create a fastplotlib grid layout
         self.plots = fpl.GridPlot(shape=(3, 4), size=(1600, 1000))
 

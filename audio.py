@@ -46,7 +46,15 @@ def quit_audio() -> None:
     pygame.mixer.quit()
 
 
-def play_audio_bytes(audio_bytes):
+def play_audio_bytes(audio_bytes, should_stop=None):
+    """Play raw audio bytes.
+
+    Args:
+        audio_bytes: encoded audio (e.g. MP3) to play.
+        should_stop: optional zero-arg callable. While the audio plays it is
+            polled ~10x/s; as soon as it returns True playback is cut short.
+            Used to stop talking the moment the user starts walking.
+    """
     try:
         audio_file = io.BytesIO(audio_bytes)
         pygame.mixer.music.load(audio_file)
@@ -54,6 +62,8 @@ def play_audio_bytes(audio_bytes):
 
         clock = pygame.time.Clock()
         while pygame.mixer.music.get_busy():
+            if should_stop is not None and should_stop():
+                break
             clock.tick(10)
 
     except pygame.error as e:
