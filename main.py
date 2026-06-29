@@ -23,8 +23,6 @@ import cv2
 import aria.sdk as aria
 import numpy as np
 
-from visualizer import BaseStreamingClientObserver
-
 from openai import OpenAI
 
 def normalize_artwork(name: str) -> str:
