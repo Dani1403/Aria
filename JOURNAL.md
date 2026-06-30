@@ -15,6 +15,44 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 - Avant de commencer une session : lire la dernière entrée de l'autre (2 min).
 
 ---
+## 2026-06-29 — Arthur — Déclencheur IMU (marche) + annonce du nom d'œuvre + descriptions longues
+
+### 1. Mise en place de l'IMU — la marche pilote l'audio
+
+Nouveau module **`motion.py`** (`WalkingDetector`) : on s'abonne au flux **IMU** des lunettes (`StreamingDataType.Imu`, activé dans `main.py` — il était commenté) et on détecte la marche via l'**écart-type de la norme de l'accéléromètre** sur une fenêtre glissante d'1 s. Immobile → std proche de 0 (gravité seule) ; marche → oscillations périodiques. Hystérésis (deux seuils `enter`/`exit`) + temps minimal dans un état pour éviter le clignotement. Le détecteur pilote un `threading.Event` `walking` partagé.
+
+Script de debug **`imu_debug.py`** : affiche en direct `|a|`, le `std` glissant et le nombre d'échantillons par IMU. Sert à vérifier que le flux IMU arrive et à **régler les seuils** (lire le std en immobile / marche lente / marche normale). Seuils actuels après calage : `enter=0.6`, `exit=0.3` (abaissés pour capter aussi la **marche lente**).
+
+> ⚠️ Le profil de streaming doit diffuser l'IMU. Si `imu_debug.py` n'affiche aucune donnée → changer de profil (ex. `./run.sh wifi profile12`).
+
+### 2. Nouvelle logique audio : marche = pause, détection d'œuvre = reprise
+
+Le déclencheur d'arrêt **« l'œuvre sort du champ » (`NONE`) est remplacé par le mouvement**. Comportement implémenté dans `tts_worker` + boucle de lecture, via deux signaux : `walking` (ignorer la vision pendant la marche) et un nouveau `paused` (bloque la lecture, levé **uniquement** quand le guide (re)lance une œuvre — pas à l'arrêt).
+
+- **Plus de coupure sèche** : la phrase en cours **va jusqu'au bout** (retrait du `should_stop` ; le gate de pause est testé *avant* de tirer la phrase suivante).
+- **Marche détectée** → on finit la phrase, on **sauvegarde les phrases restantes** dans `seen_artworks[œuvre]`, puis silence.
+- **S'arrêter de marcher ne relance rien.** La reprise est déclenchée par la **détection d'une œuvre** une fois immobile : même œuvre → reprise **là où on s'était arrêté** (phrase de retour « welcome back » + phrases sauvegardées) ; œuvre différente → description de la nouvelle.
+- `NONE` (hors champ) est devenu **inerte** : seul le mouvement met en pause.
+
+### 3. Annonce du nom de l'œuvre (bug)
+
+Le header `ARTWORK: [nom]` renvoyé par la vision était **consommé uniquement pour l'état** : seul un clip générique était joué, **le vrai nom n'était jamais prononcé** (constaté sur *La Cène* de Léonard de Vinci, mais le problème était général). Correctif : à la détection d'une **nouvelle œuvre**, on génère et joue « *This is {nom}.* » juste après le clip générique (qui masque la latence de génération), avec `raw_name` pour préserver la casse.
+
+### 4. Descriptions plus longues
+
+Relevé des trois plafonds qui se cumulaient : prompt vision « 5 to 10 » → **« 12 to 18 » phrases** (+ consigne de couvrir auteur, époque, technique, histoire, anecdote), `max_tokens` 300 → **800**, et `MAX_SENTENCES` 10 → **18** (sinon les phrases au-delà étaient jetées silencieusement côté vision **et** TTS).
+
+**Fait :** IMU branché + détection de marche (`motion.py`, `imu_debug.py`) ; bascule du déclencheur audio « hors champ » → « mouvement » ; phrase en cours jamais coupée ; reprise sur détection d'œuvre (pas à l'arrêt) avec reprise au point d'arrêt ; annonce du nom d'œuvre corrigée ; descriptions allongées.
+**Bloqué :** —
+**Prochain (dans l'ordre) :**
+- **Paralléliser l'analyse des frames** : plusieurs threads d'analyse en parallèle pour améliorer la rapidité (latence de la première description).
+- **Fluidifier l'expérience** globale (transitions, enchaînements, ressenti).
+- **Personnalisation du guide audio** (voix, ton, longueur, langue, centres d'intérêt).
+- **Tester un modèle local** (vision et/ou TTS) pour réduire latence/coût/dépendance réseau.
+- **Ouverture future : portage sur téléphone.**
+**Décisions :** le **mouvement (IMU)** devient le déclencheur de référence pour la pause/reprise, à la place de la sortie du champ de vision ; on assume des descriptions plus longues quitte à augmenter le coût TTS, la reprise au point d'arrêt rendant l'écoute fractionnable.
+
+---
 ## 2026-06-25 — Daniel — Arrêt propre Ctrl+C + run.sh autonome + détection IP WiFi
 
 ### 1. Arrêt propre Ctrl+C dans `main.py`
