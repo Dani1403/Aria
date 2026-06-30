@@ -52,7 +52,7 @@ fi
 
 # Ask the visitor for their preferences first (language, age, length).
 # guide_setup.py writes .guide_profile.json, which main.py loads at the end.
-"$PYTHON" guide_setup.py
+# "$PYTHON" guide_setup.py
 
 
 echo "[run] checking adb setup"
