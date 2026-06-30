@@ -1,8 +1,6 @@
 """Text-to-speech module using OpenAI TTS."""
 
-from pathlib import Path
-
-from openai import OpenAI, APIError, APIConnectionError
+from openai import APIError, APIConnectionError
 
 
 def generate_sentence_audio(text: str, client):
@@ -10,10 +8,10 @@ def generate_sentence_audio(text: str, client):
 
     Args:
         text: The sentence to synthesize.
-        output_path: Output path for the MP3 file.
+        client: The client model
 
     Returns:
-        The path of the generated MP3 file.
+        The audio bytes
 
     Raises:
         ValueError: If the text is empty.
@@ -21,7 +19,6 @@ def generate_sentence_audio(text: str, client):
     """
     if not text or not text.strip():
         raise ValueError("The text is empty.")
-
 
     try:
         response = client.audio.speech.create(

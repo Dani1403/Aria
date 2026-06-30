@@ -60,74 +60,6 @@ def _encode_image(image_path: str, max_size: int = 512) -> str:
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None:
-    """Stream the guide script sentence by sentence into a queue.
-
-    Each complete sentence is put into the queue as soon as it's detected.
-    A STREAM_DONE sentinel is put at the end.
-
-    Args:
-        image_path: Path to the image file.
-        sentence_queue: Queue to put sentences into.
-    """
-    path = Path(image_path)
-    if not path.exists():
-        sentence_queue.put(STREAM_DONE)
-        raise FileNotFoundError(f"Image not found: {image_path}")
-
-    base64_image = _encode_image(image_path)
-    client = OpenAI()
-
-    try:
-        stream = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": USER_PROMPT},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}",
-                                "detail": "low",
-                            },
-                        },
-                    ],
-                },
-            ],
-            max_tokens=800,
-            stream=True,
-        )
-    except (APIConnectionError, APIError) as e:
-        sentence_queue.put(STREAM_DONE)
-        raise RuntimeError(f"OpenAI API error: {e}")
-
-    buffer = ""
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        if delta.content:
-            buffer += delta.content
-            # Split on sentence-ending punctuation
-            while True:
-                match = re.search(r'[.!?](?:\s|$)', buffer)
-                if not match:
-                    break
-                end = match.end()
-                sentence = buffer[:end].strip()
-                buffer = buffer[end:]
-                if sentence:
-                    sentence_queue.put(sentence)
-
-    # Flush any remaining text
-    remaining = buffer.strip()
-    if remaining:
-        sentence_queue.put(remaining)
-
-    sentence_queue.put(STREAM_DONE)
-
-
 
 def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sentence_queue: queue.Queue, client, max_sentences: int=10) -> None:
 
@@ -206,3 +138,73 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
             sentence_queue.put((buffer.strip(), timestamp), block=False)
         except queue.Full:
             pass
+
+#Legacy function
+def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None:
+    """Stream the guide script sentence by sentence into a queue.
+
+    Each complete sentence is put into the queue as soon as it's detected.
+    A STREAM_DONE sentinel is put at the end.
+
+    Args:
+        image_path: Path to the image file.
+        sentence_queue: Queue to put sentences into.
+    """
+    path = Path(image_path)
+    if not path.exists():
+        sentence_queue.put(STREAM_DONE)
+        raise FileNotFoundError(f"Image not found: {image_path}")
+
+    base64_image = _encode_image(image_path)
+    client = OpenAI()
+
+    try:
+        stream = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": USER_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}",
+                                "detail": "low",
+                            },
+                        },
+                    ],
+                },
+            ],
+            max_tokens=800,
+            stream=True,
+        )
+    except (APIConnectionError, APIError) as e:
+        sentence_queue.put(STREAM_DONE)
+        raise RuntimeError(f"OpenAI API error: {e}")
+
+    buffer = ""
+    for chunk in stream:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            buffer += delta.content
+            # Split on sentence-ending punctuation
+            while True:
+                match = re.search(r'[.!?](?:\s|$)', buffer)
+                if not match:
+                    break
+                end = match.end()
+                sentence = buffer[:end].strip()
+                buffer = buffer[end:]
+                if sentence:
+                    sentence_queue.put(sentence)
+
+    # Flush any remaining text
+    remaining = buffer.strip()
+    if remaining:
+        sentence_queue.put(remaining)
+
+    sentence_queue.put(STREAM_DONE)
+
+

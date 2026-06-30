@@ -12,13 +12,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from vision import stream_guide_sentences, stream_guide_sentences_from_bytes,STREAM_DONE
+from vision import stream_guide_sentences_from_bytes,STREAM_DONE
 from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
-from extract_frames import extract_frames_from_video
 from motion import WalkingDetector
-#from utils import pull_aria_recording
-#from stream import simulate_stream
 
 #streaming
 import cv2
@@ -78,7 +75,7 @@ def stop_aria_streaming():
         print(f"[ARIA] streaming stop failed: {e}")
 
 
-def main(video_path: str = None, fps: float = 0.5):
+def main():
 
     load_dotenv()
 
@@ -112,14 +109,9 @@ def main(video_path: str = None, fps: float = 0.5):
         def __init__(self):
             pass
         def on_image_received(self, image, record):
-            #print("[ARIA] IMAGE CALLBACK")
             try:
                 image = np.rot90(image, -1)
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                # if record.camera_id != aria.CameraId.EyeTrack:
-                #     image = np.rot90(image)
-                # else:
-                #     image = np.rot90(image,2)
                 success, jpeg = cv2.imencode(
                     ".jpg",
                     image,
@@ -217,15 +209,9 @@ def main(video_path: str = None, fps: float = 0.5):
                 # Wait until TTS has caught up before processing a new frame
                 while sentence_q.qsize() >= 10:
                     time.sleep(0.05)
-                #attach a timestamp to measure latency to first audio
-                #timestamp = time.time()
-                # print(f"Processing frame {timestamp} with timestamp {timestamp:.2f}")
-                # with open(f"debug_frames/frame_{timestamp}.jpg", "wb") as f:
-                #     f.write(jpeg)
                 try:
                     stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client, MAX_SENTENCES)
                 except Exception as e:
-                    #print(f"Error processing frame {idx}, skipping: {e}")
                     print(f"Error processing frame")
                     continue
 
