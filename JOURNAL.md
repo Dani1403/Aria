@@ -14,6 +14,55 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 - Commiter le journal séparément du code : `git commit -m "journal: AAAA-MM-JJ"`.
 - Avant de commencer une session : lire la dernière entrée de l'autre (2 min).
 
+
+---
+## 2026-06-30 — Daniel — Réorganisation du repo + phrases pré-générées + signal END + debug
+
+### 1. Nettoyage et réorganisation du repo
+
+Gros rangement : suppression des vidéos de test lourdes (`Louvre.mp4`, `Louvre2.mp4`, `Stream.mp4`), regroupement des assets statiques dans `assets/` (images de t
+est, fichiers audio, `Stream.vrs.json`), et archivage des scripts désormais inutiles dans `legacy/` (`extract_frames.py`, `request.py`, `stream.py`, `utils.py`, `
+vrs_to_video.py`). `common.py` et `visualizer.py` supprimés. Le repo est maintenant propre et ne contient que ce qui est actif.
+
+Refactor associé dans `audio.py`, `main.py`, `tts.py`, `vision.py` pour supprimer les imports et références aux fichiers disparus.
+
+### 2. Pool de phrases pré-générées (ouverture + re-entry + fin)
+
+Ajout d'un troisième pool de phrases : `ENDING_SENTENCES` — phrases de conclusion jouées quand le modèle vision a fini de décrire une œuvre (« That's everything f
+or this one », « I'll let you take it all in from here »…). Pré-générées en TTS au démarrage comme les deux autres pools, stockées dans `ending_audio_pool`.
+
+Correction de la structure des pools : les entrées passent de `audio_bytes` à `(text, audio_bytes)` pour permettre le logging — on sait maintenant quelle phrase e
+xacte a été tirée au sort à chaque lecture.
+
+### 3. Signal END — le modèle annonce qu'il a fini
+
+Dans `vision.py` : ajout d'une consigne dans le system prompt demandant au modèle de terminer sa description par le mot exactement `END` (sans ponctuation). Ce si
+gnal est parsé au fil du stream et poussé dans la queue comme `("END", timestamp)`.
+
+Dans `main.py` : quand le `tts_worker` reçoit `END`, il pioche une phrase de conclusion dans `ending_audio_pool` et la pousse dans `audio_q` avec le type `"END"`.
+ L'`END` est aussi exclu de la sauvegarde dans `seen_artworks` (comme le `GENERIC`), pour ne pas polluer la liste des phrases à reprendre plus tard.
+
+Gestion du flush final dans `vision.py` : si `END` tombe dans le dernier buffer résiduel, il est correctement renvoyé sans être traité comme une vraie phrase.
+
+### 4. Logging TTS amélioré
+
+Toutes les traces `print` du `tts_worker` sont maintenant préfixées `[TTS]` avec le type (`GENERIC`, `REENTRY`, `NAME`, `REAL`, `END`) et le texte prononcé. Plus
+facile de suivre ce qui est joué dans les logs.
+
+### 5. Fix run.sh — caractères `\r` (Windows → Linux)
+
+`run.sh` avait des fins de ligne Windows (`\r\n`) qui causaient des erreurs silencieuses à l'exécution sous Linux/macOS. Nettoyé.
+
+**Fait :** repo nettoyé (legacy/, assets/, vidéos supprimées) ; pool de phrases de fin pré-générées ; signal END du modèle vision → phrase de conclusion automatiq
+ue ; logging [TTS] avec texte ; fix \r dans run.sh.
+**Bloqué :** —
+**Prochain :**
+- Tester le signal END sur flux réel (vérifier que le modèle envoie bien END de façon fiable).
+- Éventuellement : paralléliser l'analyse des frames (plusieurs threads vision) pour réduire la latence de la première description.
+**Décisions :** le signal END remplace un timer ou un compteur de phrases pour savoir quand le modèle a fini — plus propre et aligné avec la génération réelle ; l
+es pools stockent désormais `(text, bytes)` pour que les logs soient utiles.
+
+---
 ---
 ## 2026-06-29 — Arthur — Déclencheur IMU (marche) + annonce du nom d'œuvre + descriptions longues
 
