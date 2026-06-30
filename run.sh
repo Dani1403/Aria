@@ -5,8 +5,8 @@
 #   2. run pipeline (main.py) that connects to the active flux
 #
 # Usage :
-#   ./run.sh                             # USB, profile18 (default)
-#   ./run.sh wifi                        # WiFi — IP auto-detected via ARP (requires net-tools)
+#   ./run.sh                             # WiFi, profile18 (default) — IP auto-detected via ARP
+#   ./run.sh usb                         # USB, profile18
 #   ./run.sh wifi profile18              # WiFi + explicit profile, IP auto-detected
 #   ./run.sh wifi profile18 172.20.10.2  # WiFi + explicit IP, skips ARP scan
 #
@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 OS="$(uname -s)"   # Linux or Darwin (macOS)
-INTERFACE="${1:-usb}"
+INTERFACE="${1:-wifi}"
 PROFILE="${2:-profile18}"
 DEVICE_IP="${3:-}"
 
@@ -31,12 +31,16 @@ ping_once() {
 }
 
 # --- Python : aria_env ---
-if [[ -f aria_env/bin/activate ]]; then
+if [[ -f venv/bin/activate ]]; then
+    source venv/bin/activate
+elif [[ -f aria_env/bin/activate ]]; then
     source aria_env/bin/activate
 elif [[ -f .aria_env/bin/activate ]]; then
     source .aria_env/bin/activate
 elif [[ -f ~/aria_env/bin/activate ]]; then
     source ~/aria_env/bin/activate
+elif [[ -f ~/venv/bin/activate ]]; then
+    source ~/venv/bin/activate
 else
     echo "[run] WARNING: no virtual environment found, using system Python"
 fi
@@ -45,6 +49,10 @@ if [[ -z "$PYTHON" ]]; then
     echo "[run] ERROR: python3/python not found in PATH."
     exit 1
 fi
+
+# Ask the visitor for their preferences first (language, age, length).
+# guide_setup.py writes .guide_profile.json, which main.py loads at the end.
+"$PYTHON" guide_setup.py
 
 
 echo "[run] checking adb setup"
@@ -79,6 +87,12 @@ if ! aria auth check | grep -q authenticated; then
     echo "[run] Authenticate SDK with application if not already done. you have 10 seconds to approve on the app"
     aria auth pair
     sleep 10
+fi
+
+# Keep Wi-Fi alive on the glasses so the stream survives unplugging USB (idempotent, needs USB)
+if [[ "$INTERFACE" == "wifi" ]]; then
+    echo "[run] Enabling Wi-Fi keep-on on the device..."
+    aria device wifi keep-on --set true || echo "[run] WARNING: could not set Wi-Fi keep-on (is USB connected?)"
 fi
 
 # Auto-detect Aria IP over WiFi if not provided
@@ -137,4 +151,7 @@ echo "[run] Waiting ${STREAM_WAIT}s for stream to initialise..."
 sleep "$STREAM_WAIT"
 
 echo "[run] pipeline starting (main.py)..."
-exec "$PYTHON" main.py
+# Pass the device IP so main.py can stop streaming over Wi-Fi on Ctrl+C
+# (USB/adb may be unplugged by then). Empty in USB mode -> falls back to adb.
+export ARIA_DEVICE_IP="$DEVICE_IP"
+exec "$PYTHON" main.py --profile-file .guide_profile.json
