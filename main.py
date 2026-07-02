@@ -24,7 +24,7 @@ import numpy as np
 
 from openai import OpenAI
 
-MAX_SENTENCES = 5
+MAX_SENTENCES = 18 
 
 
 def normalize_artwork(name: str) -> str:

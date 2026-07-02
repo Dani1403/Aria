@@ -40,7 +40,6 @@ Dans `vision.py` : ajout d'une consigne dans le system prompt demandant au modè
 gnal est parsé au fil du stream et poussé dans la queue comme `("END", timestamp)`.
 
 Dans `main.py` : quand le `tts_worker` reçoit `END`, il pioche une phrase de conclusion dans `ending_audio_pool` et la pousse dans `audio_q` avec le type `"END"`.
- L'`END` est aussi exclu de la sauvegarde dans `seen_artworks` (comme le `GENERIC`), pour ne pas polluer la liste des phrases à reprendre plus tard.
 
 Gestion du flush final dans `vision.py` : si `END` tombe dans le dernier buffer résiduel, il est correctement renvoyé sans être traité comme une vraie phrase.
 
