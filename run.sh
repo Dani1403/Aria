@@ -134,8 +134,11 @@ if [[ "$INTERFACE" == "wifi" && -z "$DEVICE_IP" ]]; then
 fi
 
 START_ARGS=(--interface "$INTERFACE" --profile "$PROFILE")
-if [[ -n "$DEVICE_IP" ]]; then
-    START_ARGS+=(--device-ip "$DEVICE_IP")
+# Pass --device-ip to streaming_start.py only when ADB has no device;
+# if USB is connected, ADB is the preferred management path and TCP to
+# the glasses control port is not required (and may be refused).
+if [[ -n "$DEVICE_IP" ]] && ! adb devices 2>/dev/null | grep -q 'device$'; then
+	START_ARGS+=(--device-ip "$DEVICE_IP")
 fi
 
 if [[ ! -f "projectaria_client_sdk_samples/streaming_start.py" ]]; then

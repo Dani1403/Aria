@@ -31,12 +31,14 @@ SYSTEM_PROMPT = (
     "- Cover what it is, who made it, when, the style or technique, its history, "
     "and an interesting anecdote or detail\n"
     "- The first sentence should identify it (name or type)\n"
-    "and should be of the format: ARTWORK: [name]\n\n"
+    "and should be of the format: ARTWORK: [name].\n\n"
 
     "FORMAT CONSTRAINTS (VERY IMPORTANT):\n"
     "- Each sentence must end with a period followed by a space\n"
     "- Do NOT use dots inside names (for example write 'IM Pei' instead of 'I.M. Pei')\n"
-    "- Do NOT include abbreviations with dots\n\n"
+    "- Do NOT include abbreviations with dots\n"
+    "- After your very last sentence, output exactly: END"
+    "- Output ONLY the word END (no punctuation, no explanation)\n\n"
 
     "Rules:\n"
     "- Speak ONLY about the notable thing\n"
@@ -109,12 +111,18 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
                 buffer = buffer[end:]
 
                 # ---------------------------
-                #  HANDLE NONE
+                #  HANDLE NONE / END
                 # ---------------------------
                 if sentence.strip() == "NONE":
                     print("Got NONE skipping TTS.")
                     return  # stop processing this frame entirely
 
+                if sentence.strip().rstrip('.!?') == "END":
+                    try:
+                        sentence_queue.put(("END", timestamp), block=False)
+                    except queue.Full:
+                        pass
+                    return
 
                 # ---------------------------
                 #  PUSH TO QUEUE
@@ -133,11 +141,20 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
     # ---------------------------
     #  FINAL BUFFER FLUSH
     # ---------------------------
-    if count < max_sentences and buffer.strip():
-        try:
-            sentence_queue.put((buffer.strip(), timestamp), block=False)
-        except queue.Full:
-            pass
+    remaining = buffer.strip()
+    if remaining and count < max_sentences:
+        tokens = [t.rstrip('.!?') for t in re.split(r'[\s\n]+', remaining) if t.strip()]
+        if set(tokens) <= {"NONE", "END"}:
+            if "END" in tokens:
+                try:
+                    sentence_queue.put(("END", timestamp), block=False)
+                except queue.Full:
+                    pass
+        else:
+            try:
+                sentence_queue.put((remaining, timestamp), block=False)
+            except queue.Full:
+                pass
 
 #Legacy function
 def stream_guide_sentences(image_path: str, sentence_queue: queue.Queue) -> None:

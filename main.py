@@ -24,7 +24,7 @@ import numpy as np
 
 from openai import OpenAI
 
-MAX_SENTENCES = 18
+MAX_SENTENCES = 5
 
 
 def normalize_artwork(name: str) -> str:
@@ -239,24 +239,38 @@ def main():
         ]
 
         REENTRY_SENTENCES = [
-            "You've seen this one before — let's continue.",
-            "Welcome back. There's more to discover here.",
-            "You're back — let me pick up where we left off.",
-            "Good to have you back. Let's keep going.",
-            "You've returned to this piece. Let me continue.",
-            "Back again — there's still more to explore here.",
+            "You've seen before — let's continue.",
+            "Welcome back to this piece. There's more to discover here.",
+            "You're back ! — let me pick up where we left off.",
+            "Good to have you back at this piece. Let's keep going.",
+            "You've returned to this artwork. Let me continue.",
+            "Back again — there's still more to explore this artwork.",
+        ]
+
+        ENDING_SENTENCES = [
+            "That's everything for this artwork — take your time.",
+            "And that's the story of this artwork.",
+            "I'll let you take it all in from here.",
+            "That's all I have for this artwork !",
+            "Take a moment to look at this piece with fresh eyes.",
+            "There's plenty more to see in this artwork — I'll be here when you're ready !",
+            "That wraps up this artwork. Enjoy the rest of your visit.",
+            "Feel free to linger at this artwork — or move on when you're ready.",
         ]
 
         pools_ready = threading.Event()
         generic_audio_pool = []
         reentry_audio_pool = []
+        ending_audio_pool = []
 
         def _pregenerate():
             try:
                 for s in GENERIC_OPENING_SENTENCES:
-                    generic_audio_pool.append(generate_sentence_audio(s, client))
+                    generic_audio_pool.append((s, generate_sentence_audio(s, client)))
                 for s in REENTRY_SENTENCES:
-                    reentry_audio_pool.append(generate_sentence_audio(s, client))
+                    reentry_audio_pool.append((s, generate_sentence_audio(s, client)))
+                for s in ENDING_SENTENCES:
+                    ending_audio_pool.append((s, generate_sentence_audio(s, client)))
                 print("[TTS] Pre-generation done.")
             except Exception as e:
                 print(f"[TTS] Pre-generation failed: {e}")
@@ -267,6 +281,7 @@ def main():
 
         try:
             seen_artworks = dict()
+            description_complete = set() 
             allow_description = False
             sentence_count = 0
 
@@ -291,7 +306,7 @@ def main():
                             try:
                                 item = audio_q.get_nowait()
                                 audio_type, _ = item
-                                if audio_type != "GENERIC":
+                                if audio_type not in ("GENERIC", "REENTRY", "NAME"):
                                     seen_artworks[current_artwork].append(item)
                             except queue.Empty:
                                 break
@@ -308,6 +323,25 @@ def main():
 
                 if sentence is STREAM_DONE:
                     break
+
+                # -------------------------
+                # HANDLE END  — processed before the walking gate so that:
+                #   (a) description_complete is always updated even if the user
+                #       started walking as GPT finished, and
+                #   (b) the closing audio only plays if they are still standing.
+                # -------------------------
+                if sentence.strip().rstrip('.!?') == "END":
+                    if in_artwork and sentence_count > 0 and current_artwork not in description_complete:
+                        description_complete.add(current_artwork)
+                        allow_description = False
+                        if not is_walking:
+                            while not ending_audio_pool and not pools_ready.is_set():
+                                time.sleep(0.05)
+                            if ending_audio_pool:
+                                text, audio_bytes = random.choice(ending_audio_pool)
+                                print(f"[TTS] END: {text}")
+                                audio_q.put(("END", audio_bytes))
+                    continue
 
                 # While walking, ignore all vision input: the guide only speaks
                 # when standing in front of an artwork, and resuming is driven by
@@ -337,28 +371,32 @@ def main():
 
                         if out_artwork:
 
-                            #We were out of artwork and now we re enter it.
-                            #We can then continue explaining
-
-                            while not reentry_audio_pool and not pools_ready.is_set():
-                                time.sleep(0.05)
-                            if reentry_audio_pool:
-                                audio_q.put(("REENTRY", random.choice(reentry_audio_pool)))
-
                             in_artwork = True
                             out_artwork = False
-                            allow_description = True
-                            sentence_count = 0
-
                             current_artwork = similar
 
+                            # Allow new vision sentences only if GPT never sent END.
+                            allow_description = similar not in description_complete
+
                             saved = seen_artworks[similar]
-                            for s in saved:
-                                audio_q.put(s)
-
                             seen_artworks[similar] = []
+                            sentence_count = sum(1 for t, _ in saved if t == "REAL")
 
-                            # Resume playback: same artwork detected again.
+                            if saved:
+                                # Greet only when there is audio left to play.
+                                while not reentry_audio_pool and not pools_ready.is_set():
+                                    time.sleep(0.05)
+                                if reentry_audio_pool:
+                                    text, audio_bytes = random.choice(reentry_audio_pool)
+                                    print(f"[TTS] REENTRY: {text}")
+                                    audio_q.put(("REENTRY", audio_bytes))
+                                for s in saved:
+                                    audio_q.put(s)
+                            else:
+                                if not allow_description:
+                                    print(f"[TTS] description complete for '{similar}', nothing left to replay")
+
+                            # Resume playback.
                             paused.clear()
                             continue
 
@@ -378,19 +416,20 @@ def main():
                     seen_artworks[artwork_name] = []
                     allow_description = True
                     sentence_count = 0
-                   
+
                     in_artwork = True
                     out_artwork = False
-
                     current_artwork = artwork_name
 
-                    print(f" NEW artwork {artwork_name}")
+                    print(f" NEW artwork: {artwork_name}")
 
                     #play the generic phrase in order to fill the gap while the TTS is generating the first sentence
                     while not generic_audio_pool and not pools_ready.is_set():
                         time.sleep(0.05)
                     if generic_audio_pool:
-                        audio_q.put(("GENERIC", random.choice(generic_audio_pool)))
+                        text, audio_bytes = random.choice(generic_audio_pool)
+                        print(f"[TTS] GENERIC: {text}")
+                        audio_q.put(("GENERIC", audio_bytes))
 
                     # Announce the artwork name at the start of the description.
                     # The header "ARTWORK: <name>" is otherwise only used for
@@ -399,7 +438,9 @@ def main():
                     # adds no perceptible latency. Use raw_name to keep casing.
                     if raw_name:
                         try:
-                            name_audio = generate_sentence_audio(f"This is {raw_name}.", client)
+                            name_text = f"This is {raw_name}."
+                            name_audio = generate_sentence_audio(name_text, client)
+                            print(f"[TTS] NAME: {name_text}")
                             audio_q.put(("NAME", name_audio))
                         except Exception as e:
                             print(f"[TTS] Name announcement failed: {e}")
@@ -417,7 +458,7 @@ def main():
                 if sentence_count >= MAX_SENTENCES:
                     continue
 
-                print(f"TTS: {sentence}")
+                print(f"[TTS] REAL: {sentence}")
 
                 audio_bytes = generate_sentence_audio(sentence, client)
                 audio_q.put(("REAL", audio_bytes))
