@@ -16,6 +16,30 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 
 
 ---
+## 2026-07-07 — Daniel & Arthur — Pré-génération TTS (phrases d'habillage) + anti-rebond IMU
+
+### 1. Pré-génération des phrases d'habillage (opening/reentry/ending)
+
+Avec le système de profil visiteur (langue × groupe d'âge) mis en place plus tôt aujourd'hui, les trois pools de phrases (ouverture, re-entry, fin) étaient régénérés en direct via l'API TTS à **chaque lancement**, dans un thread de fond (`_pregenerate` + `pools_ready`) — jusqu'à 3 langues × 4 groupes d'âge × 24 phrases, soit jusqu'à 288 appels API à chaque run.
+
+Nouveau script `pregenerate_audio.py` : génère une fois pour toutes les clips pour chaque combinaison (langue, groupe d'âge, pool), stockés dans `tts_cache/<langue>/<groupe d'âge>/<pool>/<hash>.mp3` — chemin calculé par `guide_profile.cached_audio_path()`, adressé par le **hash SHA1 du texte de la phrase** (pas par position dans la liste) pour que modifier une phrase n'invalide que son propre fichier. Idempotent : relancer le script ne régénère que ce qui manque (nouvelle langue, phrase ajoutée/modifiée).
+
+`main.py` : le `tts_worker` charge désormais les trois pools **depuis le disque, de façon synchrone**, avant de démarrer sa boucle — plus de thread `_pregenerate`, plus de `pools_ready`, plus des trois boucles d'attente (`while not pool and not pools_ready.is_set(): sleep(0.05)`) éparpillées dans le code. Un clip manquant du cache est **signalé bruyamment** (`[TTS] MISSING cached audio ...`) et simplement ignoré du pool — jamais de fallback live vers l'API depuis `main.py`. L'annonce du nom d'œuvre (`NAME`) reste générée en direct puisqu'elle dépend du contenu détecté, donc impossible à pré-générer.
+
+288 clips générés et commités dans `tts_cache/` (~20 Mo, bien sous la limite GitHub de 100 Mo/fichier).
+
+### 2. Anti-rebond sur le déclenchement de la marche (`motion.py`)
+
+Le passage immobile → marche se déclenchait parfois sur un seul pic bref de l'accéléromètre. Ajout de `enter_count` (3 évaluations consécutives à ~10 Hz au-dessus de `enter_threshold` requises avant de déclarer "marche") — l'arrêt (marche → immobile), lui, reste immédiat (une seule évaluation sous `exit_threshold` suffit) : asymétrie voulue, mieux vaut couper le son un peu tard qu'ignorer un vrai arrêt.
+
+**Fait :** script `pregenerate_audio.py` + cache `tts_cache/` (288 clips, toutes langues/groupes d'âge) ; `tts_worker` chargé depuis le disque au lieu de régénérer en direct à chaque run ; anti-rebond IMU (`enter_count=3`) sur le déclenchement de la marche.
+**Bloqué :** —
+**Prochain :**
+- Étendre la pré-génération si une 4e langue ou de nouvelles phrases sont ajoutées (relancer `pregenerate_audio.py`, il ne régénère que ce qui manque).
+- Vérifier sur flux réel que `enter_count=3` n'introduit pas de délai perceptible avant la mise en pause.
+**Décisions :** cache TTS commité dans le repo (pas de `.gitignore`, taille négligeable) ; un clip manquant du cache est ignoré et loggué bruyamment plutôt que régénéré en direct (jamais d'appel TTS live pour les phrases d'habillage).
+
+---
 ## 2026-07-07 — Arthur — Refonte marche/pause/reprise + prompt vision + voix par profil
 
 ### 1. Logique marche/pause/reprise — spec clarifiée et réimplémentée
