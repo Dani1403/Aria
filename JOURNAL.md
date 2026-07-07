@@ -16,6 +16,113 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 
 
 ---
+## 2026-07-07 — Arthur — Refonte marche/pause/reprise + prompt vision + voix par profil
+
+### 1. Logique marche/pause/reprise — spec clarifiée et réimplémentée
+
+Les vieux problèmes étaient revenus (l'audio ne s'arrêtait pas toujours en marchant, pas d'enchaînement sur l'œuvre suivante à l'arrêt). Spec retenue : je marche → le guide finit sa phrase et s'arrête ; je m'arrête → nouvelle œuvre = il la présente, œuvre déjà vue = il rejoue la suite non entendue (**jamais de regénération** — si le guide est fini, silence) ; la bascule d'œuvre **sans marcher** n'est autorisée que si le guide de l'œuvre courante est terminé. Enchaînements libres (vue → nouvelle → retour sur vue).
+
+Correctifs structurels dans `main.py`/`motion.py` :
+
+- **La pause est posée par le détecteur IMU lui-même** (`WalkingDetector(pause_event=paused)`) à l'instant du départ de marche. Avant, c'était le `tts_worker` qui la posait — or il passe des secondes bloqué dans chaque appel TTS (gpt-4o-mini-tts est plus lent que tts-1, ce qui a fait resurgir le bug) et la lecture continuait pendant ce temps.
+- **Compteur de départs de marche** (`walk_events`) consommé par le `tts_worker` au lieu d'une comparaison d'états : une marche courte ne passe plus inaperçue, la sauvegarde des phrases restantes se fait toujours.
+- **Filtre de fraîcheur** (`last_still_time`) : toute phrase issue d'une frame capturée avant le dernier passage marche→immobile est ignorée (headers compris) — fini les streams périmés qui polluaient l'état. Le `vision_worker` **saute carrément l'analyse** des frames périmées : c'est le gros gain de réactivité pour l'enchaînement (une analyse complète dure 10-20 s).
+- La reprise ne regénère plus jamais (`allow_description=False` en re-entrée, l'œuvre passe en `description_complete`), une phrase dont la synthèse se termine pendant un départ de marche part en réserve au lieu de jouer, la lecture re-vérifie la pause toutes les 0.1 s même en attente de clip, et `paused.clear()` remonte avant la génération du clip NAME (sinon +1 appel TTS de latence UX à chaque œuvre).
+- **Déduplication durcie** : mots vides EN/FR/ES retirés du matching et seuil 0.5 → 0.6. « Portrait de Louis XIV » vs « Portrait de Napoléon » ne fusionnent plus (avant : la 2e œuvre restait muette). Reste par nom — le vrai fix (matching visuel) est toujours en TODO.
+
+### 2. Seuil IMU recalibré
+
+`enter_threshold` = **0.75** (remplace le 0.6 calé le 2026-06-29 — c'est la valeur validée sur flux réel aujourd'hui), `exit=0.3`, dwell 0.4 s inchangés.
+
+### 3. Prompt vision — faux positifs et reproductions
+
+Le guide décrivait plafonds, luminaires, ordinateurs. Causes : le prompt poussait au rappel maximal (« If it looks notable, assume it is », « Prefer describing rather than missing ») et le user prompt présupposait une œuvre (« Identify this artwork… ») — gpt-5.4-mini suivait docilement. Correctifs dans `build_system_prompt` :
+
+- Liste d'exclusion explicite (plafonds ordinaires, lampes, ordinateurs, mobilier, portes, personnes…), doute **asymétrique** : doute que ce soit une œuvre → NONE ; œuvre certaine mais non identifiée → décrire quand même. Exception préservée pour l'architecture-œuvre (plafond à fresques).
+- **Piège découvert en test** : la première version excluait les « écrans » → le protocole de test (œuvres affichées plein écran sur iPad) renvoyait NONE sur Le Cri. Règle ajoutée : une **reproduction** (écran, poster, carte postale, page de livre) compte comme l'œuvre elle-même — on décrit l'œuvre, jamais l'appareil ; un écran montrant autre chose (code, apps) reste non-notable. Validé : reconnaissance OK sur iPad.
+
+### 4. Voix adaptée au profil visiteur
+
+- Voix distincte par groupe d'âge (`fable` enfant, `nova` ado/adulte, `shimmer` senior — avant tout le monde sauf enfant avait `nova`).
+- Nouvelle propriété `GuideProfile.tts_instructions` : accent natif dans la langue du profil + style vocal par âge (conteur chaleureux / rythme punchy / guide posé / débit calme articulé), passée partout via le helper `tts()`. Le paramètre `instructions` n'est envoyé que si `TTS_MODEL` le supporte (gpt-4o-*) ; retour à tts-1 = une ligne, rien ne casse. NB : `speed` est ignoré par gpt-4o-mini-tts, le rythme passe par les instructions.
+
+**Fait :** refonte complète marche/pause/reprise (validée sur flux réel : arrêt en fin de phrase, enchaînement, reprise, silence si guide fini) ; seuil IMU 0.75 ; prompt vision anti-faux-positifs + règle reproductions ; voix/style TTS par profil.
+**Bloqué :** —
+**Prochain :**
+- Matching visuel des œuvres (le matching par nom traite « Mona Lisa » vs « La Joconde » comme deux œuvres).
+- TTS en streaming pour absorber la latence de gpt-4o-mini-tts.
+- Valider les voix/styles par langue à l'oreille (accent FR/ES).
+**Décisions :** reprise = **rejouer l'existant uniquement**, jamais de regénération ; bascule sans marche seulement si guide courant terminé ; les reproductions d'œuvres (écran/poster) comptent comme l'œuvre ; IMU enter=0.75 est la valeur de référence.
+
+---
+## 2026-07-07 — Arthur — Benchmark modèles vision/TTS (gpt-5.4-mini, gpt-4o-mini-tts)
+
+### 1. Migration des modèles
+
+- **Vision** : `gpt-4o-mini` → **`gpt-5.4-mini`** dans `vision.py` (les deux appels). Piège de migration : la famille gpt-5 refuse `max_tokens` (erreur 400 `Unsupported parameter`) → remplacé par `max_completion_tokens=800`. Attention : les tokens de raisonnement interne comptent dans ce budget ; si des descriptions sortent tronquées, ajouter `reasoning_effort="minimal"` ou augmenter le plafond.
+- **TTS** : testé **`gpt-4o-mini-tts`** en remplacement de `tts-1` (même signature d'appel : `voice`/`speed` acceptés ; offre en plus un paramètre `instructions` pour piloter le ton — intéressant pour le registre enfant).
+
+### 2. Benchmark latence — 3 configurations
+
+Conditions : configuration de base (profil par défaut), lunettes connectées en **WiFi**, mêmes conditions exactes pour les trois runs, une mesure par config. UX = délai détection d'œuvre → premier son (clip générique) ; REAL = délai → première vraie phrase de description.
+
+| Vision | TTS | UX | REAL |
+|---|---|---|---|
+| **gpt-5.4-mini** | **tts-1** | **2.98 s** | **7.75 s** |
+| gpt-4o-mini | tts-1 | 4.58 s | 10.0 s |
+| gpt-5.4-mini | gpt-4o-mini-tts | 4.12 s | 9.29 s |
+
+Lecture :
+
+- **gpt-5.4-mini en vision = gain net** : −1.6 s UX / −2.2 s REAL à TTS égal. Le premier token (header `ARTWORK:`) sort nettement plus vite.
+- **gpt-4o-mini-tts coûte ~1.2–1.5 s** vs tts-1 : attendu sur REAL (l'annonce du nom et les phrases sont synthétisées à la volée, TTFB plus élevé). L'écart UX est en partie suspect : le clip générique est pré-généré, donc le TTS ne devrait pas jouer — soit variance entre runs, soit attente sur le pool de pré-génération (plus lent avec gpt-4o-mini-tts) si l'œuvre est détectée très tôt.
+- Récupérable si on veut la voix gpt-4o-mini-tts : passer la lecture en **streaming** (`client.audio.speech.with_streaming_response` + lecture par chunks) au lieu d'attendre le MP3 complet — devrait regagner plus que le surcoût.
+
+### 3. Incidents de session
+
+- `tts.py`/`vision.py` écrasés par une version antérieure (ré-extraction de l'archive) → `generate_sentence_audio()` avait reperdu ses paramètres `voice`/`speed` (crash `takes 2 positional arguments but 4 were given` à la pré-génération, car `main.py` les passe depuis le profil). Restauré. Le repo local n'est pas un dépôt git → tout écrasement est silencieux.
+- Streaming WiFi sur le réseau campus (132.69.x.x) inutilisable : spam `CRITICAL DDS: sample lost` sur le topic RGB, ~2 frames délivrées en 35 s, le pipeline tourne mais la vision n'a rien à décrire. Le hotspot iPhone (172.20.10.x) reste le setup de référence.
+
+**Fait :** vision migrée sur gpt-5.4-mini (+ fix `max_completion_tokens`) ; benchmark latence 3 configs (tableau ci-dessus) ; restauration des fichiers écrasés ; diagnostic du WiFi campus.
+**Bloqué :** streaming WiFi sur réseau institutionnel (perte massive de samples DDS) — contourné via hotspot.
+**Prochain :**
+- Refaire les mesures sur 3–5 runs par config (une seule mesure = variance API non maîtrisée, surtout l'écart UX de la config 3).
+- Si la voix gpt-4o-mini-tts est retenue pour le profil enfant : implémenter le TTS en streaming pour absorber le surcoût de latence.
+- Surveiller les descriptions tronquées avec gpt-5.4-mini (reasoning tokens dans le budget de 800) ; le cas échéant `reasoning_effort="minimal"`.
+**Décisions :** config retenue = **vision gpt-5.4-mini + TTS tts-1** (meilleure latence : UX 2.98 s / REAL 7.75 s) ; gpt-4o-mini-tts écarté pour l'instant, à réévaluer avec le streaming audio.
+
+---
+## 2026-07-07 — Arthur — Personnalisation du guide (profil visiteur)
+
+### 1. Questionnaire au lancement (`guide_setup.py`)
+
+`run.sh` pose maintenant 4 questions (en anglais) avant de démarrer l'expérience : langue (English/French/Spanish), âge, niveau de connaissance en art (Novice/Intermediate/Expert), longueur des descriptions (Short/Medium/Long). Les réponses sont écrites dans `.guide_profile.json`, que `main.py` charge via `--profile-file`. Entrée vide = valeur par défaut ; pas de terminal interactif (stdin non-tty) = profil par défaut, le pipeline démarre quand même.
+
+### 2. `GuideProfile` — source de vérité unique (`guide_profile.py`)
+
+Nouveau module : dataclass gelée `GuideProfile` (language/age/knowledge/length) + propriétés dérivées. Le profil est figé pour toute la session et se propage à trois leviers :
+
+- **Ce qui est dit** : `vision.build_system_prompt(profile)` construit le prompt système dynamiquement — langue de sortie imposée, registre lié à l'âge (child ≤12 / teen / adult / senior 65+ : ton, vocabulaire, rythme) et profondeur liée au niveau de connaissance (terminologie, savoir présumé). Les deux axes sont **indépendants** : consigne explicite dans le prompt pour que l'âge ne détermine jamais la profondeur (un enfant peut être expert). Les tokens de contrôle `ARTWORK:`/`NONE`/`END` restent en anglais quelle que soit la langue — le parsing du pipeline ne change pas.
+- **Combien** : presets de longueur Short 5-8 / Medium 9-13 / Long 14-18 phrases, injectés dans le prompt vision **et** utilisés comme plafond côté TTS (`profile.max_sentences` remplace le global `MAX_SENTENCES`) — les deux plafonds restent alignés.
+- **Comment ça sonne** : voix et débit TTS dérivés du groupe d'âge (child → `fable` à 0.95, senior → `nova` à 0.9, sinon `nova` à 1.0), et les trois pools de phrases d'habillage (ouverture, re-entry, fin) + l'annonce du nom (« This is X. » / « Voici X. » / « Esta obra es X. ») sont localisés EN/FR/ES dans `PHRASES`.
+
+Ajouter une langue = ajouter une entrée `LANGUAGES` + un jeu de phrases dans `PHRASES` ; le prompt vision gère déjà n'importe quelle langue.
+
+### 3. Refactors associés
+
+`tts.generate_sentence_audio()` prend `voice`/`speed` en paramètres (défauts inchangés). `vision.stream_guide_sentences_from_bytes()` prend un `system_prompt` optionnel (fallback sur le prompt du profil par défaut). `main.py` parse `--profile-file`, loggue le profil au démarrage (`[PROFILE] ...`) et le `tts_worker` passe par un helper `tts()` qui applique voix/débit partout (pools pré-générés inclus). `load_profile()` est robuste : fichier absent ou champ invalide → fallback champ par champ sur les défauts avec warning.
+
+Au passage : fix d'un `\n` manquant dans le prompt d'origine (les lignes « output exactly: END » et « Output ONLY the word END » étaient concaténées).
+
+**Fait :** questionnaire au lancement ; `GuideProfile` propagé aux trois leviers (prompt vision, plafond de phrases, voix/débit + phrases localisées EN/FR/ES) ; testé : parcours interactif (pty), non-interactif, profils corrompus/absents, prompt généré vérifié.
+**Bloqué :** —
+**Prochain :**
+- Tester sur flux réel que GPT-4o-mini respecte bien la langue et le registre (surtout child + expert, combinaison inhabituelle).
+- Valider les voix TTS par langue (nova/fable sur du français et de l'espagnol — accent correct ?).
+- Éventuellement : centres d'intérêt du visiteur comme 5e question (prévu dans l'entrée du 2026-06-29).
+**Décisions :** le profil est **figé pour la session** (choix au lancement, pas de changement en cours de visite) ; l'âge et le niveau de connaissance sont **deux axes indépendants** dans le prompt ; les tokens de contrôle restent en anglais pour ne pas toucher au parsing.
+
+---
 ## 2026-06-30 — Daniel — Réorganisation du repo + phrases pré-générées + signal END + debug
 
 ### 1. Nettoyage et réorganisation du repo

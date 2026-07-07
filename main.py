@@ -6,16 +6,18 @@ import sys
 import time
 import queue
 import shutil
+import argparse
 import threading
 import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from vision import stream_guide_sentences_from_bytes,STREAM_DONE
+from vision import stream_guide_sentences_from_bytes, STREAM_DONE, build_system_prompt
 from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
 from motion import WalkingDetector
+from guide_profile import PROFILE_FILE, load_profile
 
 #streaming
 import cv2
@@ -24,8 +26,6 @@ import numpy as np
 
 from openai import OpenAI
 
-MAX_SENTENCES = 18 
-
 
 def normalize_artwork(name: str) -> str:
     name = name.lower().strip()
@@ -33,16 +33,26 @@ def normalize_artwork(name: str) -> str:
     name = re.sub(r'\s+', ' ', name)
     return name
 
-#TODO : NOT GOOD
-def is_similar_artwork(new_name: str, seen: dict, threshold: float = 0.5):
-    """Check if new_name is similar to any name in the seen set.
+# Words too generic to tell two artworks apart (EN/FR/ES articles and
+# connectors). Without this, "portrait de louis xiv" and "portrait de
+# napoleon" merge on "portrait de" and the second artwork is never described.
+STOPWORDS = {
+    "the", "a", "an", "of", "by", "in", "on", "and",
+    "de", "du", "des", "le", "la", "les", "l", "d", "et",
+    "el", "los", "las", "un", "une", "y",
+}
 
-    Uses word overlap ratio: if >= threshold of words match, it's a duplicate.
-    E.g. "louvre pyramid" vs "glass pyramid" -> 1/2 = 50% -> duplicate.
+#TODO : still word-based — a proper fix is visual matching (e.g. embeddings)
+def is_similar_artwork(new_name: str, seen: dict, threshold: float = 0.6):
+    """Check if new_name matches an already-seen artwork.
+
+    Word overlap ratio on meaningful words only (stopwords removed), so
+    "the mona lisa" and "mona lisa" match while two different portraits
+    stay distinct.
     """
-    new_words = set(new_name.split())
+    new_words = set(new_name.split()) - STOPWORDS
     for seen_name in seen:
-        seen_words = set(seen_name.split())
+        seen_words = set(seen_name.split()) - STOPWORDS
         if not new_words or not seen_words:
             continue
         common = new_words & seen_words
@@ -77,7 +87,27 @@ def stop_aria_streaming():
 
 def main():
 
+    parser = argparse.ArgumentParser(description="Museum audio guide pipeline")
+    parser.add_argument(
+        "--profile-file",
+        default=PROFILE_FILE,
+        help="JSON visitor profile written by guide_setup.py",
+    )
+    args = parser.parse_args()
+
     load_dotenv()
+
+    # Visitor profile: single source of truth for personalisation. Frozen for
+    # the whole session; drives the vision prompt, the sentence cap and the
+    # TTS voice/speed + localized framing phrases.
+    profile = load_profile(args.profile_file)
+    min_s, max_s = profile.sentence_range
+    print(
+        f"[PROFILE] language={profile.language_name} age={profile.age} ({profile.age_group}) "
+        f"knowledge={profile.knowledge} length={profile.length} "
+        f"({min_s}-{max_s} sentences, voice={profile.tts_voice}, speed={profile.tts_speed})"
+    )
+    system_prompt = build_system_prompt(profile)
 
     sentence_q = queue.Queue(maxsize=50)
     audio_q = queue.Queue()
@@ -87,12 +117,14 @@ def main():
     # Set while the user is walking (driven by the IMU). Used by tts_worker to
     # ignore vision input while moving.
     walking = threading.Event()
-    walking_detector = WalkingDetector(walking)
 
-    # Gates playback. Set when walking starts (after the current sentence ends)
-    # and released ONLY when the guide (re)starts an artwork — never just because
-    # the user stopped moving. So audio resumes on artwork detection, not on stop.
+    # Gates playback. Set by the IMU detector the INSTANT walking starts (so it
+    # never waits on a TTS call in flight) and released ONLY when the guide
+    # (re)starts an artwork — never just because the user stopped moving. So
+    # audio resumes on artwork detection, not on stop.
     paused = threading.Event()
+
+    walking_detector = WalkingDetector(walking, pause_event=paused)
 
     vision_error = []
     tts_error = []
@@ -205,12 +237,18 @@ def main():
             while True:
                 timestamp, jpeg = frame_q.get()
 
+                # Stale frame: captured while walking, or before the last
+                # walk -> still transition. Its guide would be dropped
+                # downstream anyway, and a full stream takes 10-20s — skip the
+                # API call entirely so a fresh frame is analysed sooner.
+                if walking.is_set() or timestamp < walking_detector.last_still_time:
+                    continue
 
                 # Wait until TTS has caught up before processing a new frame
                 while sentence_q.qsize() >= 10:
                     time.sleep(0.05)
                 try:
-                    stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client, MAX_SENTENCES)
+                    stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client, profile.max_sentences, system_prompt)
                 except Exception as e:
                     print(f"Error processing frame")
                     continue
@@ -225,38 +263,16 @@ def main():
 
         import random
 
-        GENERIC_OPENING_SENTENCES = [
-            "Let me tell you about this piece.",
-            "Here's something worth knowing about this work.",
-            "This one has quite a story behind it.",
-            "Take a closer look — there's more here than meets the eye.",
-            "Allow me to shed some light on this artwork.",
-            "There's a fascinating history behind what you're looking at.",
-            "Let me walk you through what makes this piece special.",
-            "You've picked a great one — let me tell you more.",
-            "This artwork has a lot to say. Let me help you hear it.",
-            "Step closer — I'll fill you in on this piece.",
-        ]
+        # Framing phrases in the profile's language (EN/FR/ES).
+        GENERIC_OPENING_SENTENCES = profile.phrases["opening"]
+        REENTRY_SENTENCES = profile.phrases["reentry"]
+        ENDING_SENTENCES = profile.phrases["ending"]
 
-        REENTRY_SENTENCES = [
-            "You've seen before — let's continue.",
-            "Welcome back to this piece. There's more to discover here.",
-            "You're back ! — let me pick up where we left off.",
-            "Good to have you back at this piece. Let's keep going.",
-            "You've returned to this artwork. Let me continue.",
-            "Back again — there's still more to explore this artwork.",
-        ]
-
-        ENDING_SENTENCES = [
-            "That's everything for this artwork — take your time.",
-            "And that's the story of this artwork.",
-            "I'll let you take it all in from here.",
-            "That's all I have for this artwork !",
-            "Take a moment to look at this piece with fresh eyes.",
-            "There's plenty more to see in this artwork — I'll be here when you're ready !",
-            "That wraps up this artwork. Enjoy the rest of your visit.",
-            "Feel free to linger at this artwork — or move on when you're ready.",
-        ]
+        def tts(text):
+            # Voice, speed and style directions come from the profile (age register).
+            return generate_sentence_audio(
+                text, client, profile.tts_voice, profile.tts_speed, profile.tts_instructions
+            )
 
         pools_ready = threading.Event()
         generic_audio_pool = []
@@ -266,11 +282,11 @@ def main():
         def _pregenerate():
             try:
                 for s in GENERIC_OPENING_SENTENCES:
-                    generic_audio_pool.append((s, generate_sentence_audio(s, client)))
+                    generic_audio_pool.append((s, tts(s)))
                 for s in REENTRY_SENTENCES:
-                    reentry_audio_pool.append((s, generate_sentence_audio(s, client)))
+                    reentry_audio_pool.append((s, tts(s)))
                 for s in ENDING_SENTENCES:
-                    ending_audio_pool.append((s, generate_sentence_audio(s, client)))
+                    ending_audio_pool.append((s, tts(s)))
                 print("[TTS] Pre-generation done.")
             except Exception as e:
                 print(f"[TTS] Pre-generation failed: {e}")
@@ -281,7 +297,7 @@ def main():
 
         try:
             seen_artworks = dict()
-            description_complete = set() 
+            description_complete = set()
             allow_description = False
             sentence_count = 0
 
@@ -289,19 +305,24 @@ def main():
             out_artwork = True
             current_artwork = None
 
-            was_walking = False
+            handled_walk_events = 0
 
             while True:
-                # Detect the still -> walk transition ourselves so we can pause
-                # the guide the moment the user starts moving.
-                is_walking = walking.is_set()
-                if is_walking and not was_walking:
+                # Walk starts are counted by the detector (which also sets
+                # `paused` the instant they happen). Consuming the counter —
+                # instead of comparing states — guarantees that even a short
+                # walk gets its bookkeeping done, however long the TTS call
+                # below kept us busy.
+                walk_events = walking_detector.walk_events
+                if walk_events != handled_walk_events:
+                    handled_walk_events = walk_events
                     if in_artwork:
                         print("[TTS] Walking started: finishing current sentence, then pausing.")
                         # Save everything still queued so this artwork can be
                         # resumed later, right where we left off. The sentence
                         # currently playing has already left the queue, so it
-                        # finishes normally (no abrupt cut).
+                        # finishes normally (no abrupt cut). Playback is already
+                        # gated by `paused`, so nothing races us here.
                         while not audio_q.empty():
                             try:
                                 item = audio_q.get_nowait()
@@ -314,7 +335,6 @@ def main():
                         out_artwork = True
                         allow_description = False
                     paused.set()
-                was_walking = is_walking
 
                 try:
                     sentence, frame_timestamp = sentence_q.get(timeout=0.1)
@@ -324,29 +344,28 @@ def main():
                 if sentence is STREAM_DONE:
                     break
 
+                # Only act on guides of frames seen while standing still: drop
+                # everything while walking, and everything from frames captured
+                # before the last walk -> still transition (stale streams whose
+                # ARTWORK header may already have been dropped mid-walk).
+                if walking.is_set() or frame_timestamp < walking_detector.last_still_time:
+                    continue
+
                 # -------------------------
-                # HANDLE END  — processed before the walking gate so that:
-                #   (a) description_complete is always updated even if the user
-                #       started walking as GPT finished, and
-                #   (b) the closing audio only plays if they are still standing.
+                # HANDLE END — the guide of the current artwork is finished:
+                # nothing will ever be regenerated for it, and it no longer
+                # blocks switching to another artwork without walking.
                 # -------------------------
                 if sentence.strip().rstrip('.!?') == "END":
                     if in_artwork and sentence_count > 0 and current_artwork not in description_complete:
                         description_complete.add(current_artwork)
                         allow_description = False
-                        if not is_walking:
-                            while not ending_audio_pool and not pools_ready.is_set():
-                                time.sleep(0.05)
-                            if ending_audio_pool:
-                                text, audio_bytes = random.choice(ending_audio_pool)
-                                print(f"[TTS] END: {text}")
-                                audio_q.put(("END", audio_bytes))
-                    continue
-
-                # While walking, ignore all vision input: the guide only speaks
-                # when standing in front of an artwork, and resuming is driven by
-                # the next artwork detection once stopped.
-                if is_walking:
+                        while not ending_audio_pool and not pools_ready.is_set():
+                            time.sleep(0.05)
+                        if ending_audio_pool:
+                            text, audio_bytes = random.choice(ending_audio_pool)
+                            print(f"[TTS] END: {text}")
+                            audio_q.put(("END", audio_bytes))
                     continue
 
                 # -------------------------
@@ -367,44 +386,54 @@ def main():
 
                     #check against ALL previously seen artworks
                     similar = is_similar_artwork(artwork_name, seen_artworks)
-                    if similar is not None:
 
-                        if out_artwork:
-
-                            in_artwork = True
-                            out_artwork = False
-                            current_artwork = similar
-
-                            # Allow new vision sentences only if GPT never sent END.
-                            allow_description = similar not in description_complete
-
-                            saved = seen_artworks[similar]
-                            seen_artworks[similar] = []
-                            sentence_count = sum(1 for t, _ in saved if t == "REAL")
-
-                            if saved:
-                                # Greet only when there is audio left to play.
-                                while not reentry_audio_pool and not pools_ready.is_set():
-                                    time.sleep(0.05)
-                                if reentry_audio_pool:
-                                    text, audio_bytes = random.choice(reentry_audio_pool)
-                                    print(f"[TTS] REENTRY: {text}")
-                                    audio_q.put(("REENTRY", audio_bytes))
-                                for s in saved:
-                                    audio_q.put(s)
-                            else:
-                                if not allow_description:
-                                    print(f"[TTS] description complete for '{similar}', nothing left to replay")
-
-                            # Resume playback.
-                            paused.clear()
-                            continue
-
-
-                        else:
-                            print(f"Similar artwork already seen, skipping: {artwork_name}")
+                    if in_artwork:
+                        if similar == current_artwork:
+                            # Same artwork re-detected while we are on it: its
+                            # guide already ran or is running, never restart it.
                             allow_description = False
                             continue
+                        if current_artwork not in description_complete:
+                            # Another artwork glimpsed WITHOUT walking while the
+                            # current guide is not finished: ignore it. Walking
+                            # (or finishing the guide) is what allows switching.
+                            print(f"[TTS] ignoring '{artwork_name}' — current guide not finished")
+                            continue
+                        # Current guide is finished: switching without walking
+                        # is allowed.
+                        in_artwork = False
+                        out_artwork = True
+
+                    if similar is not None:
+                        # Already-seen artwork: replay whatever was left
+                        # unheard, never regenerate (the guide is written once).
+                        in_artwork = True
+                        out_artwork = False
+                        current_artwork = similar
+                        allow_description = False
+                        sentence_count = 0
+
+                        saved = seen_artworks[similar]
+                        seen_artworks[similar] = []
+                        # Replay-only resume: after this, nothing is ever added.
+                        description_complete.add(similar)
+
+                        if saved:
+                            # Greet only when there is audio left to play.
+                            while not reentry_audio_pool and not pools_ready.is_set():
+                                time.sleep(0.05)
+                            if reentry_audio_pool:
+                                text, audio_bytes = random.choice(reentry_audio_pool)
+                                print(f"[TTS] REENTRY: {text}")
+                                audio_q.put(("REENTRY", audio_bytes))
+                            for s in saved:
+                                audio_q.put(s)
+                        else:
+                            print(f"[TTS] guide for '{similar}' already fully heard — staying silent")
+
+                        # Resume playback.
+                        paused.clear()
+                        continue
 
                     # NEW artwork
 
@@ -431,22 +460,25 @@ def main():
                         print(f"[TTS] GENERIC: {text}")
                         audio_q.put(("GENERIC", audio_bytes))
 
+                    # Release playback BEFORE generating the name clip, so the
+                    # generic phrase masks the TTS latency (paused is set on
+                    # every walk now, so waiting here would delay the first
+                    # sound by a full TTS call).
+                    paused.clear()
+
                     # Announce the artwork name at the start of the description.
                     # The header "ARTWORK: <name>" is otherwise only used for
-                    # state, so without this the name is never spoken. Generated
-                    # on the fly; the GENERIC clip above plays meanwhile, so it
-                    # adds no perceptible latency. Use raw_name to keep casing.
+                    # state, so without this the name is never spoken. Use
+                    # raw_name to keep casing.
                     if raw_name:
                         try:
-                            name_text = f"This is {raw_name}."
-                            name_audio = generate_sentence_audio(name_text, client)
+                            name_text = profile.phrases["name"].format(name=raw_name)
+                            name_audio = tts(name_text)
                             print(f"[TTS] NAME: {name_text}")
                             audio_q.put(("NAME", name_audio))
                         except Exception as e:
                             print(f"[TTS] Name announcement failed: {e}")
 
-                    # Start playback: a new artwork is being described.
-                    paused.clear()
                     continue
 
                 # -------------------------
@@ -455,13 +487,22 @@ def main():
                 if not allow_description:
                     continue
 
-                if sentence_count >= MAX_SENTENCES:
+                # Length preset cap — same limit as the vision side, otherwise
+                # extra sentences would be silently dropped here.
+                if sentence_count >= profile.max_sentences:
                     continue
 
                 print(f"[TTS] REAL: {sentence}")
 
-                audio_bytes = generate_sentence_audio(sentence, client)
-                audio_q.put(("REAL", audio_bytes))
+                audio_bytes = tts(sentence)
+                # If walking started while this sentence was being generated,
+                # it must not play now: stash it for the resume instead. (The
+                # transition handler at the top of the loop only drains what is
+                # already in audio_q — this clip isn't there yet.)
+                if walking.is_set() or paused.is_set():
+                    seen_artworks[current_artwork].append(("REAL", audio_bytes))
+                else:
+                    audio_q.put(("REAL", audio_bytes))
 
                 sentence_count += 1
 
@@ -502,7 +543,13 @@ def main():
             while paused.is_set():
                 time.sleep(0.05)
 
-            audio_type, audio_bytes = audio_q.get()
+            # Timeout so the pause gate above is re-checked periodically even
+            # while the queue is empty (a blocking get would let one clip slip
+            # through if the pause landed while we were waiting).
+            try:
+                audio_type, audio_bytes = audio_q.get(timeout=0.1)
+            except queue.Empty:
+                continue
             if audio_bytes is STREAM_DONE:
                 break
 

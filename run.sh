@@ -8,7 +8,7 @@
 #   ./run.sh                             # WiFi, profile18 (default) — IP auto-detected via ARP
 #   ./run.sh usb                         # USB, profile18
 #   ./run.sh wifi profile18              # WiFi + explicit profile, IP auto-detected
-#   ./run.sh wifi profile18 172.20.10.2  # WiFi + explicit IP, skips ARP scan
+#   ./run.sh wifi profile18 172.20.10.12  # WiFi + explicit IP, skips ARP scan
 #
 # Dependencies: adb, aria CLI, net-tools (arp for WiFi). Installed automatically where possible.
 #
@@ -50,9 +50,10 @@ if [[ -z "$PYTHON" ]]; then
     exit 1
 fi
 
-# Ask the visitor for their preferences first (language, age, length).
-# guide_setup.py writes .guide_profile.json, which main.py loads at the end.
-# "$PYTHON" guide_setup.py
+# Ask the visitor for their preferences first (language, age, art knowledge,
+# description length). guide_setup.py writes .guide_profile.json, which
+# main.py loads at startup. The profile is frozen for the whole session.
+"$PYTHON" guide_setup.py
 
 
 echo "[run] checking adb setup"
@@ -121,7 +122,7 @@ if [[ "$INTERFACE" == "wifi" && -z "$DEVICE_IP" ]]; then
 
     if [[ -z "$DEVICE_IP" ]]; then
         DEVICE_IP=$(arp -a | grep -i '2c:26:17' \
-                    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+                    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
         if [[ -n "$DEVICE_IP" ]]; then
             echo "[run] Found Aria at $DEVICE_IP (ARP scan)"
             echo "$DEVICE_IP" > "$LAST_IP_FILE"

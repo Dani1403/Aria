@@ -31,18 +31,32 @@ class WalkingDetector:
     def __init__(
         self,
         walking_event,
+        pause_event=None,
         imu_idx=1,
         window_sec=1.0,
         sample_rate=1000,
-        enter_threshold=0.6,
+        enter_threshold=0.75,
         exit_threshold=0.3,
         min_state_time=0.4,
     ):
         self.walking_event = walking_event
+        # Optional playback gate: set the instant walking starts, so pausing
+        # never waits on the (possibly busy) consumer thread. It is NEVER
+        # cleared here — only an artwork (re)detection releases playback.
+        self.pause_event = pause_event
         self.imu_idx = imu_idx
         self.enter_threshold = enter_threshold
         self.exit_threshold = exit_threshold
         self.min_state_time = min_state_time
+
+        # Transition bookkeeping read by the pipeline:
+        #   walk_events     — number of walk starts so far. Consumers compare
+        #                     against their own counter so even a short walk is
+        #                     handled, however late they get to it.
+        #   last_still_time — time of the last walk -> still transition. Frames
+        #                     captured before it are stale.
+        self.walk_events = 0
+        self.last_still_time = 0.0
 
         self._mags = deque(maxlen=max(1, int(window_sec * sample_rate)))
         self._lock = threading.Lock()
@@ -80,9 +94,13 @@ class WalkingDetector:
         walking = self.walking_event.is_set()
         if not walking and std > self.enter_threshold:
             self.walking_event.set()
+            if self.pause_event is not None:
+                self.pause_event.set()
+            self.walk_events += 1
             self._last_change = now
             print(f"[IMU] walking -> audio paused (std={std:.2f})")
         elif walking and std < self.exit_threshold:
             self.walking_event.clear()
+            self.last_still_time = now
             self._last_change = now
-            print(f"[IMU] still -> audio resumes (std={std:.2f})")
+            print(f"[IMU] still -> waiting for artwork detection (std={std:.2f})")
