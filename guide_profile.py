@@ -13,8 +13,10 @@ Adding a language = adding an entry to LANGUAGES + a phrase set in PHRASES;
 the vision prompt already handles any output language.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 PROFILE_FILE = ".guide_profile.json"
 
@@ -25,6 +27,21 @@ LANGUAGES = {
 }
 
 KNOWLEDGE_LEVELS = ("novice", "intermediate", "expert")
+
+# One representative age per group, used to pregenerate/look up cached audio.
+# Voice/speed/instructions only depend on the age group, not the exact age, so
+# any age in the group's range yields the same clip.
+AGE_GROUP_SAMPLE_AGE = {
+    "child": 8,
+    "teen": 15,
+    "adult": 30,
+    "senior": 70,
+}
+
+# Framing-phrase clips (opening/reentry/ending) are pregenerated once by
+# pregenerate_audio.py and committed to the repo, then loaded from disk at
+# startup instead of hitting the TTS API on every run.
+AUDIO_CACHE_DIR = Path("tts_cache")
 
 # Length preset -> (min, max) sentences. The max is enforced on BOTH sides:
 # in the vision prompt and as the TTS cap (otherwise extra sentences would be
@@ -222,6 +239,17 @@ class GuideProfile:
     @property
     def phrases(self) -> dict:
         return PHRASES[self.language]
+
+
+def cached_audio_path(language: str, age_group: str, pool: str, text: str) -> Path:
+    """Content-addressed path for a pregenerated framing-phrase clip.
+
+    Keyed by the phrase text (not its position in the list) so editing one
+    phrase only invalidates that one file instead of desyncing the whole
+    cache against pregenerate_audio.py.
+    """
+    key = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+    return AUDIO_CACHE_DIR / language / age_group / pool / f"{key}.mp3"
 
 
 def save_profile(profile: GuideProfile, path: str = PROFILE_FILE) -> None:

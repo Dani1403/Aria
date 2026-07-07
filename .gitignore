@@ -369,3 +369,4 @@ FodyWeavers.xsd
 debug_frames/
 stream_chunks/
 .aria_last_ip
+.claude

@@ -9,6 +9,7 @@ import shutil
 import argparse
 import threading
 import subprocess
+import random
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ from vision import stream_guide_sentences_from_bytes, STREAM_DONE, build_system_
 from tts import generate_sentence_audio
 from audio import init_audio, play_audio_file, quit_audio, play_audio_bytes
 from motion import WalkingDetector
-from guide_profile import PROFILE_FILE, load_profile
+from guide_profile import PROFILE_FILE, load_profile, cached_audio_path
 
 #streaming
 import cv2
@@ -261,10 +262,8 @@ def main():
 
         print("[TTS] Worker started, waiting for sentences...")
 
-        import random
-
         # Framing phrases in the profile's language (EN/FR/ES).
-        GENERIC_OPENING_SENTENCES = profile.phrases["opening"]
+        OPENING_SENTENCES = profile.phrases["opening"]
         REENTRY_SENTENCES = profile.phrases["reentry"]
         ENDING_SENTENCES = profile.phrases["ending"]
 
@@ -274,26 +273,25 @@ def main():
                 text, client, profile.tts_voice, profile.tts_speed, profile.tts_instructions
             )
 
-        pools_ready = threading.Event()
-        generic_audio_pool = []
-        reentry_audio_pool = []
-        ending_audio_pool = []
+        def _load_cached_pool(pool_name, sentences):
+            # Framing phrases are pregenerated once by pregenerate_audio.py and
+            # committed to the repo (tts_cache/) — loaded from disk here so
+            # startup never blocks on (or pays for) a live TTS call.
+            pool = []
+            for text in sentences:
+                path = cached_audio_path(profile.language, profile.age_group, pool_name, text)
+                if not path.exists():
+                    print(
+                        f"[TTS] MISSING cached audio for {pool_name} "
+                        f"({profile.language}/{profile.age_group}): {text!r} — run pregenerate_audio.py"
+                    )
+                    continue
+                pool.append((text, path.read_bytes()))
+            return pool
 
-        def _pregenerate():
-            try:
-                for s in GENERIC_OPENING_SENTENCES:
-                    generic_audio_pool.append((s, tts(s)))
-                for s in REENTRY_SENTENCES:
-                    reentry_audio_pool.append((s, tts(s)))
-                for s in ENDING_SENTENCES:
-                    ending_audio_pool.append((s, tts(s)))
-                print("[TTS] Pre-generation done.")
-            except Exception as e:
-                print(f"[TTS] Pre-generation failed: {e}")
-            finally:
-                pools_ready.set()
-
-        threading.Thread(target=_pregenerate, daemon=True).start()
+        opening_audio_pool = _load_cached_pool("opening", OPENING_SENTENCES)
+        reentry_audio_pool = _load_cached_pool("reentry", REENTRY_SENTENCES)
+        ending_audio_pool = _load_cached_pool("ending", ENDING_SENTENCES)
 
         try:
             seen_artworks = dict()
@@ -360,8 +358,6 @@ def main():
                     if in_artwork and sentence_count > 0 and current_artwork not in description_complete:
                         description_complete.add(current_artwork)
                         allow_description = False
-                        while not ending_audio_pool and not pools_ready.is_set():
-                            time.sleep(0.05)
                         if ending_audio_pool:
                             text, audio_bytes = random.choice(ending_audio_pool)
                             print(f"[TTS] END: {text}")
@@ -420,8 +416,6 @@ def main():
 
                         if saved:
                             # Greet only when there is audio left to play.
-                            while not reentry_audio_pool and not pools_ready.is_set():
-                                time.sleep(0.05)
                             if reentry_audio_pool:
                                 text, audio_bytes = random.choice(reentry_audio_pool)
                                 print(f"[TTS] REENTRY: {text}")
@@ -453,10 +447,8 @@ def main():
                     print(f" NEW artwork: {artwork_name}")
 
                     #play the generic phrase in order to fill the gap while the TTS is generating the first sentence
-                    while not generic_audio_pool and not pools_ready.is_set():
-                        time.sleep(0.05)
-                    if generic_audio_pool:
-                        text, audio_bytes = random.choice(generic_audio_pool)
+                    if opening_audio_pool:
+                        text, audio_bytes = random.choice(opening_audio_pool)
                         print(f"[TTS] GENERIC: {text}")
                         audio_q.put(("GENERIC", audio_bytes))
 
