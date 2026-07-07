@@ -25,6 +25,9 @@ class WalkingDetector:
         sample_rate: approximate IMU rate, used to size the window buffer.
         enter_threshold: std (m/s2) above which we declare "walking".
         exit_threshold: std (m/s2) below which we declare "still" again.
+        enter_count: number of CONSECUTIVE evaluations (~10 Hz) above
+            enter_threshold required before declaring "walking". Going back
+            to "still" only takes a single evaluation below exit_threshold.
         min_state_time: minimum seconds to stay in a state before flipping.
     """
 
@@ -37,6 +40,7 @@ class WalkingDetector:
         sample_rate=1000,
         enter_threshold=0.75,
         exit_threshold=0.3,
+        enter_count=3,
         min_state_time=0.4,
     ):
         self.walking_event = walking_event
@@ -47,7 +51,10 @@ class WalkingDetector:
         self.imu_idx = imu_idx
         self.enter_threshold = enter_threshold
         self.exit_threshold = exit_threshold
+        self.enter_count = enter_count
         self.min_state_time = min_state_time
+        # Consecutive evaluations above enter_threshold while still.
+        self._above_count = 0
 
         # Transition bookkeeping read by the pipeline:
         #   walk_events     — number of walk starts so far. Consumers compare
@@ -92,14 +99,24 @@ class WalkingDetector:
             return
 
         walking = self.walking_event.is_set()
-        if not walking and std > self.enter_threshold:
+        if not walking:
+            # Require enter_count consecutive evaluations above the threshold
+            # before declaring "walking"; a single quiet one resets the count.
+            if std > self.enter_threshold:
+                self._above_count += 1
+            else:
+                self._above_count = 0
+            if self._above_count < self.enter_count:
+                return
+            self._above_count = 0
             self.walking_event.set()
             if self.pause_event is not None:
                 self.pause_event.set()
             self.walk_events += 1
             self._last_change = now
             print(f"[IMU] walking -> audio paused (std={std:.2f})")
-        elif walking and std < self.exit_threshold:
+        elif std < self.exit_threshold:
+            # Stopping is immediate: one evaluation below the threshold.
             self.walking_event.clear()
             self.last_still_time = now
             self._last_change = now
