@@ -40,7 +40,7 @@ class WalkingDetector:
         sample_rate=1000,
         enter_threshold=0.75,
         exit_threshold=0.3,
-        enter_count=3,
+        enter_count=5,
         min_state_time=0.4,
     ):
         self.walking_event = walking_event
