@@ -16,6 +16,25 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 
 
 ---
+## 2026-07-16 — Daniel — Enregistrement audio de session (préparation montage vidéo)
+
+### Enregistrement de l'audio de session — test en musée réel
+
+Objectif : tourner une **vidéo de test dans un vrai musée** et pouvoir monter l'audio du guide sur les images. Chaque clip joué est maintenant sauvegardé dans `session_audio/<AAAA_MM_JJ_HH_MM>/` (un dossier par session, commit `e69962f`) :
+
+- Fichier nommé `audio_<timestamp>_<type>.mp3` — le **timestamp est pris juste AVANT la lecture** (pas après : `play_audio_bytes` est bloquant, un horodatage post-lecture serait décalé de la durée du clip sur la timeline vidéo), et le type (`GENERIC`/`NAME`/`REAL`/`REENTRY`/`END`) est dans le nom pour retrouver facilement un clip au montage.
+- Le **profil visiteur est copié dans le dossier de session** (`shutil.copy2`) — chaque enregistrement reste traçable (langue, âge, longueur des descriptions).
+- Sémantique assumée : le dossier est le journal fidèle de **ce que le visiteur a réellement entendu** (rejeux de re-entry inclus) ; une phrase synthétisée pendant une marche mais jamais rejouée n'y figure pas. Corollaire : un Ctrl+C en pleine phrase perd le clip en cours (écrit après lecture) — acceptable pour ce cas d'usage.
+- `.gitignore` : ajout de `session_audio/` et `.guide_profile.json` (fichiers générés, pas leur place dans le repo).
+
+**Fait :** enregistrement des clips joués dans `session_audio/<session>/` (timestamp pré-lecture + type dans le nom, profil visiteur copié dans le dossier) ; `.gitignore` complété.
+**Bloqué :** —
+**Prochain :**
+- Tournage vidéo en musée réel (hotspot téléphone) et validation de l'alignement audio/vidéo au montage.
+- Reprendre le backlog de bugs confirmés du 2026-06-30 (spam END, fuite du nom d'œuvre, REENTRY sur réserve vide, sentence_q périmée).
+**Décisions :** l'enregistrement de session reflète **ce qui a été entendu** (écrit à la lecture, rejeux inclus, phrases jamais rejouées exclues) ; timestamps = début de lecture, pour l'alignement au montage ; `session_audio/` et `.guide_profile.json` hors git.
+
+---
 ## 2026-07-07 — Daniel & Arthur — Pré-génération TTS (phrases d'habillage) + anti-rebond IMU
 
 ### 1. Pré-génération des phrases d'habillage (opening/reentry/ending)
