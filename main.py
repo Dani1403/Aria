@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 import queue
 import shutil
 import argparse
@@ -524,6 +525,15 @@ def main():
     # --- Main thread: playback ---
     init_audio()
 
+    #initialize session audio for montage
+    session_audio_dir = Path("session_audio")
+    session_audio_dir.mkdir(parents=True, exist_ok=True)
+    session_dir = Path(f"session_audio/{datetime.now().strftime('%Y_%m_%d_%H_%M')}")
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    #copy guide profile inside session for reference
+    shutil.copy2(PROFILE_FILE, session_dir)
+
     interrupted = False
     try:
         while True:
@@ -562,8 +572,15 @@ def main():
                     latency_start["ux_done"] = False
                     latency_start["real_done"] = False
 
+            #for video montage
+            audio_timestamp = time.time()
+
             # Play the whole sentence to the end (never cut mid-sentence).
             play_audio_bytes(audio_bytes)
+
+            #add the audio to the session audio directory for video montage
+            with open(f"{session_dir}/audio_{audio_timestamp}_{audio_type}.mp3", "wb") as f:
+                f.write(audio_bytes)
 
     except KeyboardInterrupt:
         print("\n[MAIN] Interrupted, shutting down...")
