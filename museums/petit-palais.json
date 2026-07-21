@@ -1,0 +1,39 @@
+{
+  "id": "petit-palais",
+  "name": "Petit Palais, Paris",
+  "artworks": [
+    {
+      "id": "courbet-chien-noir",
+      "title": "Portrait de l'artiste, dit Courbet au chien noir",
+      "artist": "Gustave Courbet",
+      "year": "1842",
+      "type": "painting"
+    },
+    {
+      "id": "clairin-sarah-bernhardt",
+      "title": "Portrait de Sarah Bernhardt",
+      "artist": "Georges Clairin",
+      "year": "1876",
+      "type": "painting"
+    },
+    {
+      "id": "monet-lavacourt-soleil-couchant",
+      "title": "Soleil couchant sur la Seine à Lavacourt, effet d'hiver",
+      "artist": "Claude Monet",
+      "year": "1880",
+      "type": "painting"
+    },
+    {
+      "id": "cezanne-trois-baigneuses",
+      "title": "Trois baigneuses",
+      "artist": "Paul Cézanne",
+      "year": "circa 1879-1882",
+      "type": "painting",
+      "visual": "Three nude women bathing under arching trees, built up with thick parallel diagonal brushstrokes, dominated by greens and blues.",
+      "notes": [
+        "Bought by Henri Matisse in 1899 when he was still poor and unknown; he kept it for 37 years.",
+        "When Matisse donated it to the Petit Palais in 1936, he wrote that the painting had sustained him morally at critical moments of his life as an artist."
+      ]
+    }
+  ]
+}

@@ -1,9 +1,10 @@
 """Visitor profile — single source of truth for personalisation.
 
-The GuideProfile is collected by guide_setup.py at launch (4 questions) and
+The GuideProfile is collected by guide_setup.py at launch (5 questions) and
 frozen for the whole session. It drives three levers:
   - WHAT is said: vision.build_system_prompt() derives the output language,
-    the age register (tone) and the knowledge depth from it,
+    the age register (tone), the knowledge depth and the optional museum
+    catalog (grounding for artwork identification) from it,
   - HOW MUCH: the length preset caps the sentence count on both the vision
     prompt and the TTS side,
   - HOW it sounds: TTS voice/speed and the localized framing phrases below
@@ -17,6 +18,9 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
+
+from museum_db import list_museums
 
 PROFILE_FILE = ".guide_profile.json"
 
@@ -57,6 +61,7 @@ DEFAULTS = {
     "age": 30,
     "knowledge": "intermediate",
     "length": "medium",
+    "museum": None,  # None = no museum database, full improvisation
 }
 
 # Voice/speed/style by age group. Tone/rhythm only — never ties age to knowledge.
@@ -197,6 +202,7 @@ class GuideProfile:
     age: int = DEFAULTS["age"]
     knowledge: str = DEFAULTS["knowledge"]    # one of KNOWLEDGE_LEVELS
     length: str = DEFAULTS["length"]          # key of LENGTH_PRESETS
+    museum: Optional[str] = DEFAULTS["museum"]  # museums/<id>.json, None = improvisation
 
     @property
     def language_name(self) -> str:
@@ -260,6 +266,7 @@ def save_profile(profile: GuideProfile, path: str = PROFILE_FILE) -> None:
                 "age": profile.age,
                 "knowledge": profile.knowledge,
                 "length": profile.length,
+                "museum": profile.museum,
             },
             f,
             indent=2,
@@ -295,9 +302,17 @@ def load_profile(path: str = PROFILE_FILE) -> GuideProfile:
         print(f"[PROFILE] invalid age {data.get('age')!r} — falling back to {DEFAULTS['age']}")
         age = DEFAULTS["age"]
 
+    # Museum is validated against the museums/ directory (dynamic set, and
+    # None is a legitimate value), so it does not go through pick().
+    museum = data.get("museum") or None
+    if museum is not None and museum not in list_museums():
+        print(f"[PROFILE] unknown museum {museum!r} — falling back to free improvisation.")
+        museum = None
+
     return GuideProfile(
         language=pick("language", LANGUAGES),
         age=age,
         knowledge=pick("knowledge", KNOWLEDGE_LEVELS),
         length=pick("length", LENGTH_PRESETS),
+        museum=museum,
     )

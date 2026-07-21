@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Visitor questionnaire — run by run.sh before the experience starts.
 
-Asks 4 questions in English (language, age, art knowledge, description
-length), builds the GuideProfile — the single source of truth for
+Asks 5 questions in English (language, age, art knowledge, description
+length, museum), builds the GuideProfile — the single source of truth for
 personalisation — and writes it to .guide_profile.json for main.py.
 The profile is frozen for the whole session.
+
+The museum question only appears when museums/ contains at least one
+database; the default is always "no museum" (full improvisation).
 """
 
 import sys
@@ -15,6 +18,7 @@ from guide_profile import (
     GuideProfile,
     save_profile,
 )
+from museum_db import list_museums
 
 
 def ask_choice(question, options, default_key):
@@ -33,6 +37,21 @@ def ask_choice(question, options, default_key):
             if answer.lower() in (key, label.lower()):
                 return key
         print("Please answer with one of the numbers above.")
+
+
+def ask_museum():
+    """Museum question — returns a museum id or None (free improvisation).
+
+    Skipped entirely (returning None) when museums/ has no databases, so the
+    questionnaire is unchanged for setups without catalogs.
+    """
+    museums = list_museums()
+    if not museums:
+        return None
+    options = [("none", "No museum — free improvisation")]
+    options += [(museum_id, name) for museum_id, name in museums.items()]
+    choice = ask_choice("Which museum are you visiting?", options, "none")
+    return None if choice == "none" else choice
 
 
 def ask_age(default):
@@ -72,18 +91,22 @@ def main():
                 [("short", "Short"), ("medium", "Medium"), ("long", "Long")],
                 DEFAULTS["length"],
             )
+            museum = ask_museum()
         except EOFError:
             print("\n[SETUP] Input closed — keeping the default profile.")
             profile = GuideProfile()
         else:
-            profile = GuideProfile(language=language, age=age, knowledge=knowledge, length=length)
+            profile = GuideProfile(
+                language=language, age=age, knowledge=knowledge, length=length, museum=museum
+            )
 
     save_profile(profile)
     min_s, max_s = profile.sentence_range
+    museum_label = list_museums().get(profile.museum, "none (free improvisation)")
     print(
         f"\n[SETUP] Profile saved to {PROFILE_FILE}: {profile.language_name}, "
         f"{profile.age} years old, {profile.knowledge}, {profile.length} descriptions "
-        f"({min_s}-{max_s} sentences). Enjoy your visit!"
+        f"({min_s}-{max_s} sentences), museum: {museum_label}. Enjoy your visit!"
     )
 
 

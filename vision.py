@@ -10,6 +10,7 @@ from PIL import Image
 from openai import OpenAI, APIError, APIConnectionError
 
 from guide_profile import GuideProfile
+from museum_db import load_museum
 
 # Register by age group: tone, vocabulary, sentence length, rhythm ONLY.
 # Knowledge depth is a separate, independent axis (a child can be an expert,
@@ -52,15 +53,73 @@ KNOWLEDGE_DEPTHS = {
 }
 
 
+def _catalog_entry_line(index: int, entry: dict) -> str:
+    """Compile one artwork entry into a compact catalog line for the prompt.
+
+    Only title is guaranteed; visual and notes are optional enrichment, so a
+    bare title+artist database yields a bare (and cheap) catalog line.
+    """
+    meta = ", ".join(str(entry[k]) for k in ("artist", "year") if entry.get(k))
+    extras = ", ".join(str(entry[k]) for k in ("type", "room") if entry.get(k))
+    line = f'{index}. "{entry["title"]}"'
+    if meta:
+        line += f" — {meta}"
+    if extras:
+        line += f" ({extras})"
+    line += "."
+    if entry.get("visual"):
+        line += f' Looks like: {entry["visual"]}'
+    notes = entry.get("notes") or []
+    if notes:
+        line += f' Facts: {" ".join(notes)}'
+    return line
+
+
+def _museum_section(museum: dict) -> str:
+    """Compile a museum database into the MUSEUM CONTEXT prompt section.
+
+    The catalog is the model's identification shortlist: matching what the
+    camera sees against a closed list of visual descriptions is far more
+    reliable than open-set identification of little-known works.
+    """
+    catalog = "\n".join(
+        _catalog_entry_line(i, entry) for i, entry in enumerate(museum["artworks"], 1)
+    )
+    return (
+        "MUSEUM CONTEXT (VERY IMPORTANT):\n"
+        f"- The visitor is at: {museum['name']}.\n"
+        "- Below is the museum's catalog. When you see an artwork, FIRST try to "
+        "match it against the catalog, using the titles, artists and (when "
+        "provided) the 'Looks like' descriptions and locations.\n"
+        "- If it matches an entry: the first sentence must be ARTWORK: followed "
+        "by the entry's title EXACTLY as written in the catalog, and your "
+        "description must be grounded in the entry's facts (when provided), "
+        "your reliable knowledge of that work and artist, and what you can "
+        "actually see.\n"
+        "- If it is clearly an artwork but matches no catalog entry, describe it "
+        "as usual.\n"
+        "- NEVER invent names, dates, attributions or anecdotes for a work you "
+        "could not match: when unsure, describe only what you can see.\n\n"
+        "CATALOG:\n"
+        f"{catalog}\n\n"
+    )
+
+
 def build_system_prompt(profile: GuideProfile) -> str:
     """Build the vision system prompt from the visitor profile.
 
     The profile drives the output language, the age register (tone), the
-    knowledge depth (terminology, assumed background) and the sentence count
-    (length preset). Control tokens (ARTWORK:, NONE, END) stay in English
-    whatever the output language, so the pipeline parsing never changes.
+    knowledge depth (terminology, assumed background), the sentence count
+    (length preset) and the optional museum catalog (grounding). Control
+    tokens (ARTWORK:, NONE, END) stay in English whatever the output
+    language, so the pipeline parsing never changes.
+
+    The result is static for the whole session (the profile is frozen), so
+    OpenAI prefix caching absorbs the per-frame cost of the catalog.
     """
     min_s, max_s = profile.sentence_range
+    museum = load_museum(profile.museum) if profile.museum else None
+    museum_section = _museum_section(museum) if museum else ""
     return (
         "You are a tour guide in an augmented reality system.\n\n"
 
@@ -97,6 +156,8 @@ def build_system_prompt(profile: GuideProfile) -> str:
         "and an interesting anecdote or detail\n"
         "- The first sentence should identify it (name or type)\n"
         "and should be of the format: ARTWORK: [name].\n\n"
+
+        f"{museum_section}"
 
         "AUDIENCE (VERY IMPORTANT):\n"
         f"- Write every description sentence in {profile.language_name}.\n"

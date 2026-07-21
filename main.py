@@ -107,7 +107,8 @@ def main():
     print(
         f"[PROFILE] language={profile.language_name} age={profile.age} ({profile.age_group}) "
         f"knowledge={profile.knowledge} length={profile.length} "
-        f"({min_s}-{max_s} sentences, voice={profile.tts_voice}, speed={profile.tts_speed})"
+        f"({min_s}-{max_s} sentences, voice={profile.tts_voice}, speed={profile.tts_speed}) "
+        f"museum={profile.museum or 'none (free improvisation)'}"
     )
     system_prompt = build_system_prompt(profile)
 

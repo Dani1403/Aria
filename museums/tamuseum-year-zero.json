@@ -1,0 +1,18 @@
+{
+  "id": "tamuseum-year-zero",
+  "name": "Tel Aviv Museum of Art — Year Zero exhibition",
+  "artworks": [
+    {
+      "id": "kollwitz-never-again-war",
+      "title": "Never Again War",
+      "artist": "Käthe Kollwitz",
+      "year": "1924",
+      "type": "lithograph",
+      "visual": "Black and white lithograph poster of a young person with raised right arm and hand held up in an oath gesture, bold expressive strokes.",
+      "notes": [
+        "Anti-war poster created for the 1924 Central German Youth Day, ten years after Kollwitz lost her son Peter in World War I.",
+        "Part of the Tel Aviv Museum of Art collection, shown in Year Zero, which marks 80 years since the end of World War II and recounts how founding director Karl Schwarz rescued artworks from Europe between 1933 and 1945."
+      ]
+    }
+  ]
+}
