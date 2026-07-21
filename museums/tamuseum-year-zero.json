@@ -13,6 +13,30 @@
         "Anti-war poster created for the 1924 Central German Youth Day, ten years after Kollwitz lost her son Peter in World War I.",
         "Part of the Tel Aviv Museum of Art collection, shown in Year Zero, which marks 80 years since the end of World War II and recounts how founding director Karl Schwarz rescued artworks from Europe between 1933 and 1945."
       ]
+    },
+    {
+      "id": "chagall-solitude",
+      "title": "Solitude",
+      "artist": "Marc Chagall",
+      "year": "1933",
+      "type": "painting",
+      "visual": "A bearded Jew wrapped in a white prayer shawl sits on the ground clutching a Torah scroll, beside him a white cow with a violin, under a dark cloudy sky with a small town and an angel in the distance.",
+      "notes": [
+        "Oil on canvas painted in 1933, the year the Nazis seized power in Germany: the melancholic Jew protects the Torah in front of a threatened world, consoled by the violin-playing cow.",
+        "Chagall donated the painting to the Tel Aviv Museum of Art through the State of Israel in 1953; it is one of the pillars of the museum's Modern Art Collection."
+      ]
+    },
+    {
+      "id": "archipenko-woman-with-fan",
+      "title": "Woman with Fan",
+      "artist": "Alexander Archipenko",
+      "year": "1914",
+      "type": "sculpto-painting",
+      "visual": "Colorful Cubist relief of a stylized seated woman holding a fan, assembled on a panel from sheet metal, linen, wood, glass and a metal funnel, with angular geometric forms.",
+      "notes": [
+        "The first of what Archipenko called his 'sculpto-paintings', mixing painting and assemblage of ready-made materials.",
+        "Part of a group of 32 early Archipenko works sent to the young Tel Aviv Museum for safekeeping in 1933 by the German-Jewish collector Erich Goeritz — exactly the kind of rescue story the Year Zero exhibition recounts."
+      ]
     }
   ]
 }
