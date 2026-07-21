@@ -16,6 +16,36 @@ Détection de fixation → reconnaissance d'œuvre → génération de script �
 
 
 ---
+## 2026-07-21 — Daniel — Database musée dans le prompt vision + validation au Tel Aviv Museum
+
+### 1. Le problème : identification en champ ouvert impossible sur les œuvres peu connues
+
+Constat en musée réel : sur des œuvres qui ne sont pas mondialement célèbres, le modèle vision n'identifie rien — il sort « un homme en noir », « une femme ». Solution retenue (branche `Database`) : une **database d'œuvres par musée**, choisie au lancement dans le profil visiteur, injectée dans le prompt du modèle vision. Matcher ce que voit la caméra contre une **liste fermée** de candidats est beaucoup plus facile pour le modèle que l'identification en champ ouvert.
+
+### 2. Format et architecture
+
+- **`museums/<id>.json`** (nouveau module `museum_db.py`) : un fichier par musée. Par œuvre, seuls **`id` et `title` sont requis** ; `artist`, `year`, `type`, `room`, `visual` (description de ce que voit la caméra), `notes` (faits vérifiés) sont optionnels. Workflow assumé : partir d'une **liste nue titre+auteur** (récupérable en minutes depuis l'inventaire du musée, ~2k tokens pour 100 œuvres), tester, puis enrichir uniquement les œuvres que le modèle rate ou sur lesquelles il invente. Alternative envisagée et écartée pour l'instant : matching par embeddings d'images (CLIP local) — le bon outil à grande échelle, overkill pour nos musées cibles ; gardé comme évolution future.
+- **`GuideProfile.museum`** (défaut `None` = full impro, comportement historique inchangé) : 5ᵉ question dans `guide_setup.py` (listée depuis `museums/`, sautée si le répertoire est vide), validation au chargement (musée inconnu → fallback impro avec warning).
+- **Section `MUSEUM CONTEXT` + `CATALOG`** dans `build_system_prompt()` : le prompt reste **statique toute la session** (profil gelé), donc le prompt caching OpenAI absorbe le surcoût par frame. Le titre du catalogue doit être recopié **exactement** dans `ARTWORK:` → noms canoniques, ce qui devrait aussi fiabiliser la dédup/re-entry.
+- Deux catalogues créés : `petit-palais.json` (exemple, 4 œuvres) et `tamuseum-year-zero.json` (expo Year Zero, 3 œuvres : Kollwitz *Never Again War*, Chagall *Solitude*, Archipenko *Woman with Fan* — la checklist complète des ~150 œuvres n'est pas publique).
+
+### 3. Bug de forced matching découvert et corrigé
+
+Test : Joconde montrée au guide avec le catalogue Year Zero (1 seule œuvre à l'époque) → le modèle sort… *Never Again War*. Le prompt (« FIRST try to match against the catalog ») poussait à choisir l'entrée la plus proche, même sans ressemblance. Réécriture de la section : le catalogue est une **aide, pas une contrainte** — match uniquement sur correspondance visible réelle (« seeing an artwork is NOT evidence that it is in the catalog »), le modèle doit faire confiance à sa propre identification pour les œuvres célèbres hors catalogue, et ne rien inventer sinon.
+
+### 4. Validation au Tel Aviv Museum of Art (expo Year Zero)
+
+**Tout fonctionne** : la Joconde est identifiée comme la Joconde (plus de forced matching), et les **trois œuvres du catalogue sont matchées** correctement sur place.
+
+**Fait :** database musée de bout en bout (`museum_db.py`, champ profil + 5ᵉ question, section prompt, 2 catalogues) ; fix du forced matching ; 15 checks automatisés ; validé en conditions réelles au Tel Aviv Museum.
+**Bloqué :** checklist complète de Year Zero non publique (~150 œuvres, seuls 3 artistes annoncés en ligne).
+**Prochain :**
+- Récupérer la liste complète : demander au musée l'**« exhibition checklist »** (service presse — press kit — ou équipe curatoriale, avec les textes de cartels pour le champ `notes`) ; plan B validé : photographier les cartels en salle et les convertir en JSON.
+- Tester le passage à l'échelle (~150 œuvres nues ≈ +3k tokens/frame, vérifier latence et qualité du matching avec un gros catalogue).
+- Reprendre le backlog de bugs du 2026-06-30 (spam END, fuite du nom d'œuvre, REENTRY sur réserve vide, sentence_q périmée) — le nom canonique du catalogue devrait aider sur la fuite de nom.
+**Décisions :** le catalogue est une **aide, jamais une contrainte** (match seulement sur preuve visible, les œuvres célèbres priment sur le catalogue) ; schéma minimal `id`+`title` avec enrichissement itératif `visual`/`notes` ; database dans le system prompt, statique par session (prompt caching) ; matching par embeddings d'images écarté pour l'instant, réévalué si les catalogues grossissent.
+
+---
 ## 2026-07-16 — Daniel — Enregistrement audio de session (préparation montage vidéo)
 
 ### Enregistrement de l'audio de session — test en musée réel
