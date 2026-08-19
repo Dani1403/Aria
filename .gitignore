@@ -368,7 +368,6 @@ FodyWeavers.xsd
 *.mp4
 debug_frames/
 stream_chunks/
-session_audio/
 .guide_profile.json
 .aria_last_ip
 .claude
