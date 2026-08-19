@@ -253,7 +253,7 @@ def main():
                 try:
                     stream_guide_sentences_from_bytes(jpeg, timestamp, sentence_q, client, profile.max_sentences, system_prompt)
                 except Exception as e:
-                    print(f"Error processing frame")
+                    print(f"Error processing frame: {e!r}")
                     continue
 
         except Exception as e:

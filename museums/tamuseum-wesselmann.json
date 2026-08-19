@@ -1,0 +1,61 @@
+{
+  "id": "tamuseum-wesselmann",
+  "name": "Tel Aviv Museum of Art — Tom Wesselmann exhibition",
+  "artworks": [
+    {
+      "id": "wesselmann-still-life-34",
+      "title": "Still Life #34",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "wesselmann-still-life-33",
+      "title": "Still Life #33",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "wesselmann-still-life-49",
+      "title": "Still Life #49",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "wesselmann-mouth-14",
+      "title": "Mouth #14",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "wesselmann-great-american-nude-31",
+      "title": "Great American Nude #31",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "wesselmann-great-american-nude-26",
+      "title": "Great American Nude #26",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "wesselmann-drawing-for-bathtub-collage-1",
+      "title": "Drawing for Bathtub Collage #1",
+      "artist": "Tom Wesselmann"
+    },
+    {
+      "id": "lichtenstein-modern-painting-in-porcelain",
+      "title": "Modern Painting in Porcelain",
+      "artist": "Roy Lichtenstein"
+    },
+    {
+      "id": "warhol-campbells-soup-ii",
+      "title": "Campbell's Soup II",
+      "artist": "Andy Warhol"
+    },
+    {
+      "id": "matisse-odalisque",
+      "title": "L'Odalisque",
+      "artist": "Henri Matisse"
+    },
+    {
+      "id": "picasso-seated-nudes",
+      "title": "Seated Nudes",
+      "artist": "Pablo Picasso"
+    }
+  ]
+}

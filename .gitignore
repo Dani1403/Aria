@@ -372,3 +372,4 @@ session_audio/
 .guide_profile.json
 .aria_last_ip
 .claude
+venv/

@@ -217,25 +217,23 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
     base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
     try:
-        stream = client.chat.completions.create(
-            model="gpt-5.4-mini",
-            messages=[
-                {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
+        stream = client.responses.create(
+            model="gpt-5.6-terra",
+            instructions=system_prompt or SYSTEM_PROMPT,
+            input=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": USER_PROMPT},
+                        {"type": "input_text", "text": USER_PROMPT},
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}",
-                                "detail": "low",
-                            },
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{base64_image}",
+                            "detail": "low",
                         },
                     ],
                 },
             ],
-            max_completion_tokens=800,
+            max_output_tokens=800,
             stream=True,
         )
     except (APIConnectionError, APIError) as e:
@@ -245,10 +243,13 @@ def stream_guide_sentences_from_bytes(image_bytes: bytes, timestamp: float, sent
     count = 0
     buffer = ""
 
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        if delta.content:
-            buffer += delta.content
+    for event in stream:
+        # Responses streaming emits typed events; text arrives as
+        # response.output_text.delta. Ignore reasoning/lifecycle events.
+        if event.type != "response.output_text.delta":
+            continue
+        if event.delta:
+            buffer += event.delta
 
             while True:
                 match = re.search(r'[.!?](?:\s|$)', buffer)
