@@ -372,3 +372,5 @@ stream_chunks/
 .aria_last_ip
 .claude
 venv/
+docs/
+CLAUDE.md
